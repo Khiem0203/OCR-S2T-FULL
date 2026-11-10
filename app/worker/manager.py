@@ -21,6 +21,10 @@ QUEUE_LOG_SUBDIR = {
     "fullpage_ocr_queue":     "ocr",
     "fullpage_spell_queue":   "spell",
     "fullpage_db_queue":      "db",
+    "speech_prepare_queue":   "speech",
+    "speech_asr_queue":       "speech",
+    "speech_spell_queue":     "speech",
+    "speech_db_queue":        "speech",
 }
 
 
@@ -47,6 +51,10 @@ WORKER_PRESETS = {
     "fullpage_ocr_queue":     {"num_workers": 2, "concurrency": 1, "description": "Chandra full-page OCR (GPU-bound)"},
     "fullpage_spell_queue":   {"num_workers": 2, "concurrency": 1, "description": "Dictionary + ProtonX spelling check (GPU-bound)"},
     "fullpage_db_queue":      {"num_workers": 2, "concurrency": 2, "description": "Save to database + webhook (I/O-bound)"},
+    "speech_prepare_queue":   {"num_workers": 1, "concurrency": 1, "description": "Download S3 + ffmpeg decode + split audio (CPU-bound)"},
+    "speech_asr_queue":       {"num_workers": 1, "concurrency": 1, "description": "PhoWhisper speech-to-text (GPU-bound)"},
+    "speech_spell_queue":     {"num_workers": 1, "concurrency": 1, "description": "Dictionary + ProtonX spelling check (GPU-bound)"},
+    "speech_db_queue":        {"num_workers": 1, "concurrency": 2, "description": "Save transcript + webhook (I/O-bound)"},
 }
 
 
