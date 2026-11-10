@@ -43,7 +43,7 @@ def get_lexicon(settings: Settings) -> Lexicon | None:
     return _lexicon(settings.dictionary_dir, settings.dictionaries, settings.extra_words_file)
 
 
-def build_spell_checker(settings: Settings, http: httpx.AsyncClient) -> SpellChecker | None:
+def build_spell_checker(settings: Settings, http: httpx.AsyncClient, review: str | None = None) -> SpellChecker | None:
     lexicon = get_lexicon(settings)
     if lexicon is None or settings.spell_mode == "off":
         return None
@@ -51,7 +51,7 @@ def build_spell_checker(settings: Settings, http: httpx.AsyncClient) -> SpellChe
     if settings.spell_mode == "both":
         fixer = ProtonXClient(http, settings.spellfix_url, settings.spellfix_timeout, settings.spellfix_concurrency)
     rules = load_replacements(settings.replacements_file) if settings.replacements_file else []
-    return SpellChecker(lexicon, fixer, settings.spell_mode, settings.spell_review, settings.spell_batch_chars, rules)
+    return SpellChecker(lexicon, fixer, settings.spell_mode, review or settings.spell_review, settings.spell_batch_chars, rules)
 
 
 def build_chandra(settings: Settings, http: httpx.AsyncClient) -> ChandraClient:
