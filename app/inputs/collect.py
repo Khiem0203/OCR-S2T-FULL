@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ..config import Settings
 from ..pipeline.pages import PageSource, TooManyPages, UnsupportedFile
-from .select import kind, plan
+from .select import kind, natural_key, plan
 from .textfile import read_text_file
 
 log = logging.getLogger("ocr.inputs")
@@ -81,3 +81,24 @@ def collect(storage, s3_path: str, folder: Path, settings: Settings, prepare) ->
             info.setdefault("pdf_text", []).append({**report, "file": posixpath.basename(key)})
     info["mode"] = "ocr"
     return {"input": info, "image_paths": images, "text_paths": page_texts}
+
+
+def collect_audio(storage, s3_path: str, folder: Path, settings: Settings, prepare) -> dict:
+    """Tải file âm thanh (một file hoặc cả thư mục, theo tên) và giải mã từng file.
+
+    prepare(src, out_dir, settings, index, used_seconds) trả thông tin file và các đoạn.
+    """
+    bucket, keys, _ = storage.candidates(s3_path, siblings=False)
+    keys = sorted((k for k in keys if kind(k) == "audio"), key=natural_key)
+    if not keys:
+        raise UnsupportedFile("no supported audio file (mp3, m4a, wav, flac, ogg, opus, aac, wma, mp4...)")
+    files, used = [], 0.0
+    for i, key in enumerate(keys, start=1):
+        local = storage.download(bucket, key, folder / "src", settings.speech_max_upload_mb * 1024 * 1024)
+        try:
+            f = prepare(local, folder / "pcm", settings, i, used)
+        finally:
+            local.unlink(missing_ok=True)
+        used += f["duration"]
+        files.append(f)
+    return {"files": files}
