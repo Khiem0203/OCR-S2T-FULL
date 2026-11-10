@@ -7,6 +7,7 @@ from pathlib import Path
 from celery import chain
 from celery.utils.log import get_task_logger
 
+from ..audio.decode import AudioTooLong, UnsupportedAudio
 from ..clients.webhook import send_webhook
 from ..config import load_settings
 from ..inputs.collect import collect
@@ -35,14 +36,18 @@ def _public_error(exc: Exception) -> tuple[int, str]:
             return 502, "Storage endpoint unreachable"
     except ImportError:
         pass
-    if isinstance(exc, UnsupportedFile):
+    if isinstance(exc, (UnsupportedFile, UnsupportedAudio)):
         return 415, str(exc)
-    if isinstance(exc, (TooManyPages, FileTooLarge)):
+    if isinstance(exc, (TooManyPages, FileTooLarge, AudioTooLong)):
         return 413, str(exc)
     if isinstance(exc, ValueError):
         return 422, str(exc)
     if isinstance(exc, flow.AllPagesFailed):
         return 502, "OCR backend unavailable"
+    from ..pipeline.speech import AllSegmentsFailed
+
+    if isinstance(exc, AllSegmentsFailed):
+        return 502, "Speech-to-text backend unavailable"
     return 500, "Processing failed"
 
 
