@@ -1,4 +1,4 @@
-# OCR toàn trang (Chandra + từ điển + ProtonX)
+# OCR toàn trang và chép lời âm thanh (Chandra, PhoWhisper + từ điển + ProtonX)
 
 Phiên bản mới của hệ thống OCR, dựng trên khung của `ocr-qldd` (Celery, RabbitMQ, PostgreSQL, webhook, quản lý worker).
 Chỉ còn một luồng OCR toàn trang (`app/pipeline/fullpage.py`): OCR toàn trang bằng Chandra, sửa chính tả bằng **ProtonX + 3 bộ từ điển**,
@@ -12,6 +12,13 @@ POST /api/ocr-fullpage ──► RabbitMQ
    fullpage_ocr_queue         ▼  Chandra (vLLM) đọc toàn trang → text
    fullpage_spell_queue       ▼  ProtonX sửa, từ điển kiểm duyệt → sửa chính tả → báo từ lạ
    fullpage_db_queue          ▼  lưu PostgreSQL + gửi webhook + dọn file tạm
+
+POST /api/speech-to-text ──► RabbitMQ
+                              │
+   speech_prepare_queue       ▼  tải file âm thanh, ffmpeg đổi ra 16 kHz mono, cắt đoạn ≤ 28 giây ở chỗ lặng
+   speech_asr_queue           ▼  PhoWhisper-large (vLLM) chép lời từng đoạn, gửi song song
+   speech_spell_queue         ▼  ProtonX sửa, từ điển kiểm duyệt → sửa chính tả → báo từ lạ
+   speech_db_queue            ▼  lưu PostgreSQL + gửi webhook + dọn file tạm
 ```
 
 ## Cấu trúc thư mục `app/`
@@ -22,18 +29,23 @@ app/
 ├── api/                 HTTP API
 │   ├── main.py          FastAPI app: xác thực, các endpoint      → uvicorn app.api.main:create_app --factory
 │   ├── documents.py     API cho web xem kết quả, trang, chỗ đã sửa
+│   ├── transcripts.py   API cho web xem bản chép lời, đoạn, chỗ đã sửa
 │   └── schemas.py       model request/response (pydantic)
 ├── worker/              Celery
 │   ├── celery_app.py    Celery app, hàng đợi, định tuyến          → celery -A app.worker.celery_app worker
-│   ├── tasks.py         4 tác vụ: tải/render → OCR → chính tả → lưu DB + webhook
+│   ├── tasks.py         4 tác vụ OCR: tải/render → OCR → chính tả → lưu DB + webhook
+│   ├── speech_tasks.py  4 tác vụ speech: tải/giải mã → PhoWhisper → chính tả → lưu DB + webhook
 │   └── manager.py       bật/tắt worker qua Flower
+├── audio/               âm thanh
+│   └── decode.py        ffmpeg → PCM 16 kHz mono, cắt đoạn ở chỗ lặng, bỏ đoạn im lặng
 ├── inputs/              file đầu vào
 │   ├── select.py        phân loại file, chọn file văn bản / file cần OCR
 │   ├── textfile.py      đọc docx, doc, odt, rtf, txt; đổi TCVN3; kiểm tra chất lượng
 │   ├── pdftext.py       phát hiện lỗi Unicode trong lớp text PDF (có lỗi là OCR cả file)
-│   └── collect.py       lấy từ S3: thử file văn bản trước, không được mới render để OCR
+│   └── collect.py       lấy từ S3: thử file văn bản trước, không được mới render để OCR; lấy file âm thanh
 ├── pipeline/            nghiệp vụ OCR toàn trang
 │   ├── fullpage.py      ghép các bước: OCR từng trang, sửa chính tả, báo từ lạ, kết quả cuối
+│   ├── speech.py        speech-to-text: chép lời từng đoạn, sửa chính tả, báo từ lạ, kết quả cuối
 │   └── pages.py         đọc PDF/ảnh, render trang, chỉnh nghiêng, co ảnh
 ├── spell/               kiểm tra chính tả
 │   ├── lexicon.py       3 bộ từ điển, sinh ứng viên
@@ -43,6 +55,7 @@ app/
 ├── clients/             gọi dịch vụ bên ngoài qua HTTP
 │   ├── http.py          POST có thử lại (dùng chung)
 │   ├── chandra.py       Chandra OCR (vLLM), HTML → text
+│   ├── phowhisper.py    PhoWhisper (vLLM, /v1/audio/transcriptions)
 │   ├── protonx.py       client ProtonX
 │   └── webhook.py       gửi kết quả tới callback_url
 ├── storage/             dữ liệu vào/ra
@@ -61,6 +74,9 @@ Mọi endpoint `/api/*` cần khóa: `X-API-Key: <khóa>` hoặc `Authorization:
 |---|---|
 | `POST /api/ocr-fullpage` | Nộp việc OCR toàn trang (file nằm trên MinIO/S3). Trả `202` + `request_id`. |
 | `POST /api/ocr-fullpage/sync` | Tải file lên trực tiếp, nhận kết quả ngay (không qua hàng đợi, không lưu DB, không webhook). |
+| `POST /api/speech-to-text` | Nộp việc chép lời âm thanh (file hoặc thư mục trên MinIO/S3). Trả `202` + `request_id`. Xem [Speech-to-text](#speech-to-text). |
+| `POST /api/speech-to-text/sync` | Tải file âm thanh lên, nhận bản chép lời ngay. |
+| `GET /api/transcripts`, `/{id}`, `/{id}/segments`, `/{id}/changes` | Bản chép lời đã lưu (cho web). |
 | `POST /api/spellcheck` | Chỉ kiểm tra chính tả một đoạn text, kèm báo cáo từ lạ. |
 | `GET /api/request-status/{id}` | Trạng thái; khi `SUCCESS` trả luôn kết quả. |
 | `GET /api/documents` | Danh sách tài liệu đã lưu (cho web), xem [API cho web](#api-cho-web). |
@@ -212,6 +228,63 @@ mỗi mục giống một phần tử `changes` của kết quả (`page, line, 
 
 Kết quả của `/api/ocr-fullpage/sync` và `/api/spellcheck` cũng có `changes` với `segments`, nên web dùng được ngay mà không cần DB.
 
+## Speech-to-text
+
+Chép lời file âm thanh bằng `vinai/PhoWhisper-large` (Whisper large-v2 tinh chỉnh cho tiếng Việt) chạy trên vLLM, rồi sửa chính tả
+bằng ProtonX + 3 bộ từ điển như OCR. Nhận `mp3, m4a, m4b, aac, wav, flac, ogg, oga, opus, wma, amr, aiff` và cả video
+`mp4, webm, mkv, mov` (lấy tiếng).
+
+```bash
+curl -H "X-API-Key: $KEY" -H "Content-Type: application/json" localhost:9090/api/speech-to-text -d '{
+  "s3_path": "s3://bucket/ghi-am/hop-ngay-03.m4a",
+  "callback_url": "https://noi-nhan-ket-qua.example/hook", "document_id": 12345
+}'
+curl -H "X-API-Key: $KEY" -F file=@hop.m4a localhost:9090/api/speech-to-text/sync
+```
+`s3_path` là một file, hoặc một thư mục (kết thúc bằng `/`): mọi file âm thanh trong thư mục, xử lý theo tên (`phan2` trước `phan10`).
+Khóa S3 có thể bỏ, giống OCR. Trạng thái xem ở `GET /api/request-status/{id}` như OCR.
+
+Cách làm (theo `transcribe.py` của `aside`):
+
+1. ffmpeg đổi file ra PCM 16 kHz mono (ghi ra đĩa, không nạp cả file vào RAM). Không có ffmpeg thì chỉ đọc được `wav`.
+2. Cắt đoạn dài `SPEECH_MIN_CHUNK`–`SPEECH_MAX_CHUNK` giây (15–28) ở **chỗ lặng nhất**, vì Whisper chỉ nghe tối đa 30 giây.
+   Đoạn có biên độ không vượt `SPEECH_SILENCE_LEVEL` bị bỏ để Whisper không bịa chữ.
+3. Gửi song song `ASR_CONCURRENCY` đoạn lên `/v1/audio/transcriptions` (`temperature 0`, `language vi`). Lỗi mạng / 5xx thử lại,
+   4xx báo luôn. Đoạn lỗi có `error`; mọi đoạn đều lỗi thì trả 502.
+4. Sửa chính tả: mỗi đoạn là một dòng. Whisper ra âm tiết đúng chính tả nhưng có thể sai từ, nên mặc định
+   `SPEECH_SPELL_REVIEW=all`: ProtonX xem **mọi đoạn**, không chỉ đoạn có từ lạ. Từ điển vẫn kiểm duyệt mọi chỗ ProtonX sửa.
+
+Kết quả:
+```json
+{
+  "duration": 42.0,
+  "segment_count": 2,
+  "text": "mỗi đoạn một dòng",
+  "segments": [{"index": 1, "file": "hop.m4a", "start": 0.0, "end": 21.0, "text": "Việc thực hiện nghị quyết",
+                "corrections": [{"wrong": "thưc", "right": "thực", "by": "protonx"}], "error": null}],
+  "correction_total": 1,
+  "changes": [{"segment": 1, "file": "hop.m4a", "start": 0.0, "end": 21.0,
+               "before": "Việc thưc hiện nghị quyết", "after": "Việc thực hiện nghị quyết",
+               "marked": "Việc [thưc→thực] hiện nghị quyết", "segments": [...], "fixes": [...]}],
+  "unknown_words": [{"word": "...", "kind": "foreign", "count": 1, "segments": [1], "samples": ["..."]}],
+  "unknown_total": 1,
+  "notice": "...",
+  "input": {"mode": "speech", "files": [{"file": "hop.m4a", "duration": 42.0}]},
+  "elapsed_ms": 9100
+}
+```
+`start`, `end` tính bằng giây trong từng file. File không có tiếng nói nào trả `text` rỗng và `notice`.
+Giới hạn: `SPEECH_MAX_MINUTES` (tổng thời lượng) và `SPEECH_MAX_UPLOAD_MB` (mỗi file).
+
+API cho web (cần PostgreSQL; bảng `speech_transcripts`, mỗi từ đã sửa một dòng trong `speech_corrections` kèm thời gian):
+
+| Endpoint | Trả |
+|---|---|
+| `GET /api/transcripts?limit&offset&document_id` | Danh sách, mới nhất trước |
+| `GET /api/transcripts/{id}` | Tổng quan: thời lượng, số đoạn, số chỗ sửa, từ lạ |
+| `GET /api/transcripts/{id}/segments?file&changed&limit&offset` | Các đoạn theo thời gian; đoạn bị sửa có `before`, `segments` (tô màu), `fixes` |
+| `GET /api/transcripts/{id}/changes?file&by&limit&offset` | Các đoạn đã sửa, lọc theo file hoặc cách sửa |
+
 ## Báo từ không có trong từ điển
 
 Sau khi OCR **và** sửa chính tả xong, mọi từ còn lại không có trong bộ từ điển đã nạp đều được báo ở 4 nơi:
@@ -251,21 +324,25 @@ Cần RabbitMQ, PostgreSQL, Chandra (vLLM) và ProtonX chạy sẵn (hoặc đ�
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 sudo apt install antiword catdoc libreoffice-writer-nogui   # đọc .doc / .odt / .rtf
+sudo apt install ffmpeg                                      # giải mã âm thanh cho speech-to-text
 # Sửa .env: điền API_KEYS, CELERY_BROKER_URL, CELERY_RESULT_BACKEND, POSTGRES_*; sửa CHANDRA_URL, SPELLFIX_API_URL
 python -c "import secrets; print(secrets.token_urlsafe(32))"   # dùng để tạo khóa/mật khẩu (an toàn cho URL)
 VENV_BIN=$PWD/.venv/bin ./start-service.sh
 # ProtonX trong cùng venv: .venv/bin/pip install -r requirements-spellfix.txt, rồi START_SPELLFIX=true (nghe 127.0.0.1:8006)
 # Chandra trong cùng venv (cần vllm): START_CHANDRA=true (nghe 127.0.0.1:CHANDRA_PORT)
+# PhoWhisper trong cùng venv (cần pip install "vllm[audio]"): START_PHOWHISPER=true (nghe 127.0.0.1:PHOWHISPER_PORT)
 ./stop-service.sh
 ```
-Chọn card GPU cho từng model trong `.env`: `CHANDRA_CUDA_DEVICE`, `SPELLFIX_CUDA_DEVICE` (số thứ tự trong `nvidia-smi`, vd `0`, `1` hoặc `0,1`).
+Chọn card GPU cho từng model trong `.env`: `CHANDRA_CUDA_DEVICE`, `PHOWHISPER_CUDA_DEVICE`, `SPELLFIX_CUDA_DEVICE` (số thứ tự trong `nvidia-smi`, vd `0`, `1` hoặc `0,1`).
 Áp dụng cho `start-service.sh` và các mẫu systemd `service/vllm-chandra.service`, `service/spellfix.service` (cả hai đọc `.env`).
 Tham số vLLM của Chandra cũng nằm trong `.env`: `CHANDRA_PORT`, `CHANDRA_MAX_MODEL_LEN`, `CHANDRA_GPU_MEMORY_UTILIZATION`,
 `CHANDRA_MAX_NUM_BATCHED_TOKENS`, `CHANDRA_MAX_NUM_SEQS`, `CHANDRA_PREFIX_CACHING`, `CHANDRA_VLLM_EXTRA_ARGS` (cờ khác); đặt `CHANDRA_API_KEY`
 thì vLLM bắt buộc khóa đó và worker tự gửi kèm.
 Chạy bằng đúng user sở hữu thư mục dự án (script sẽ báo lỗi rõ ràng nếu `logs/` hoặc `temp_processing/` không ghi được).
-Mẫu systemd: `service/ocr-fullpage.service`; mẫu vLLM: `service/vllm-chandra.service`; mẫu ProtonX: `service/spellfix.service`.
-API ở cổng `API_PORT` (mặc định 9090). Worker mặc định: prepare 2, ocr 2, spell 2, db 2 (đổi bằng `PREPARE_WORKERS`, `OCR_WORKERS`, `SPELL_WORKERS`, `DB_WORKERS`).
+Mẫu systemd: `service/ocr-fullpage.service`; mẫu vLLM: `service/vllm-chandra.service`, `service/vllm-phowhisper.service`
+(PhoWhisper fp16 khoảng 3 GB VRAM, đọc `PHOWHISPER_*` trong `.env`); mẫu ProtonX: `service/spellfix.service`.
+API ở cổng `API_PORT` (mặc định 9090). Worker mặc định: prepare 2, ocr 2, spell 2, db 2 (đổi bằng `PREPARE_WORKERS`, `OCR_WORKERS`, `SPELL_WORKERS`, `DB_WORKERS`);
+speech mỗi hàng đợi 1 (`SPEECH_PREPARE_WORKERS`, `SPEECH_ASR_WORKERS`, `SPEECH_SPELL_WORKERS`, `SPEECH_DB_WORKERS`), log ở `logs/speech/`.
 RabbitMQ, PostgreSQL và Flower nên chỉ nghe `127.0.0.1` (Flower do `start-service.sh` bật đã như vậy).
 
 ## Bảo mật
