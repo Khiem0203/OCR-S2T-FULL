@@ -360,14 +360,23 @@ VENV_BIN=$PWD/.venv/bin ./start-service.sh
 # PhoWhisper trong cùng venv (cần pip install "vllm[audio]"): START_PHOWHISPER=true (nghe 127.0.0.1:PHOWHISPER_PORT)
 ./stop-service.sh
 ```
-Chọn card GPU cho từng model trong `.env`: `CHANDRA_CUDA_DEVICE`, `PHOWHISPER_CUDA_DEVICE`, `SPELLFIX_CUDA_DEVICE` (số thứ tự trong `nvidia-smi`, vd `0`, `1` hoặc `0,1`).
-Áp dụng cho `start-service.sh` và các mẫu systemd `service/vllm-chandra.service`, `service/spellfix.service` (cả hai đọc `.env`).
-Tham số vLLM của Chandra cũng nằm trong `.env`: `CHANDRA_PORT`, `CHANDRA_MAX_MODEL_LEN`, `CHANDRA_GPU_MEMORY_UTILIZATION`,
+Chọn card GPU (số thứ tự trong `nvidia-smi`, vd `0`, `1` hoặc `0,1`): ProtonX bằng `SPELLFIX_CUDA_DEVICE` trong `.env`; Chandra và PhoWhisper bằng `CUDA_VISIBLE_DEVICES` trong file service.
+Áp dụng cho `start-service.sh` (đọc `.env`). Các file systemd trong `service/` ghi **giá trị cố định**, không đọc `.env`:
+đổi card, cổng, model thì sửa thẳng trong file service.
+Chỉ khi bật model bằng `start-service.sh` (`START_CHANDRA=true`, `START_PHOWHISPER=true`) mới cần thêm vào `.env` các biến
+tham số vLLM (không có thì script dùng mặc định); ví dụ với Chandra: `CHANDRA_PORT`, `CHANDRA_MAX_MODEL_LEN`, `CHANDRA_GPU_MEMORY_UTILIZATION`,
 `CHANDRA_MAX_NUM_BATCHED_TOKENS`, `CHANDRA_MAX_NUM_SEQS`, `CHANDRA_PREFIX_CACHING`, `CHANDRA_VLLM_EXTRA_ARGS` (cờ khác); đặt `CHANDRA_API_KEY`
 thì vLLM bắt buộc khóa đó và worker tự gửi kèm.
 Chạy bằng đúng user sở hữu thư mục dự án (script sẽ báo lỗi rõ ràng nếu `logs/` hoặc `temp_processing/` không ghi được).
-Mẫu systemd: `service/ocr-fullpage.service`; mẫu vLLM: `service/vllm-chandra.service`, `service/vllm-phowhisper.service`
-(PhoWhisper fp16 khoảng 3 GB VRAM, đọc `PHOWHISPER_*` trong `.env`); mẫu ProtonX: `service/spellfix.service`.
+Mẫu systemd (giá trị cố định):
+
+| File | Chạy |
+|---|---|
+| `service/ocr-fullpage.service` | `start-service.sh` / `stop-service.sh` trong `/opt/ocr-fullpage/backend` |
+| `service/vllm-chandra.service` | `datalab-to/chandra-ocr-2`, GPU 0, cổng 8101, max-model-len 6000, VRAM 0.95, batched tokens 9216, 20 seqs, prefix caching |
+| `service/vllm-phowhisper.service` | `vinai/PhoWhisper-large` (tên gọi `phowhisper-large`), GPU 0, cổng 8120, fp16 (khoảng 3 GB VRAM), VRAM 0.8, 64 seqs |
+
+Cổng phải khớp `CHANDRA_URL` và `PHOWHISPER_URL` trong `.env`.
 API ở cổng `API_PORT` (mặc định 9090). Worker mặc định: prepare 2, ocr 2, spell 2, db 2 (đổi bằng `PREPARE_WORKERS`, `OCR_WORKERS`, `SPELL_WORKERS`, `DB_WORKERS`);
 speech mỗi hàng đợi 1 (`SPEECH_PREPARE_WORKERS`, `SPEECH_ASR_WORKERS`, `SPEECH_SPELL_WORKERS`, `SPEECH_DB_WORKERS`), log ở `logs/speech/`.
 RabbitMQ, PostgreSQL và Flower nên chỉ nghe `127.0.0.1` (Flower do `start-service.sh` bật đã như vậy).
