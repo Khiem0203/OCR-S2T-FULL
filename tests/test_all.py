@@ -272,11 +272,17 @@ def make_pdf(text="Trang van ban"):
 class Mocks:
     """Giả lập Chandra và ProtonX."""
 
-    def __init__(self, chandra_html="<p>Xin chào</p>", spellfix=None, chandra_fail=False):
+    def __init__(self, chandra_html="<p>Xin chào</p>", spellfix=None, chandra_fail=False, speech="Xin chào", speech_status=200):
         self.chandra_html, self.spellfix, self.chandra_fail = chandra_html, spellfix, chandra_fail
-        self.chandra_requests, self.spellfix_requests = [], []
+        self.speech, self.speech_status = speech, speech_status
+        self.chandra_requests, self.spellfix_requests, self.speech_requests = [], [], []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == "phowhisper":
+            self.speech_requests.append(request.content)
+            if self.speech_status != 200:
+                return httpx.Response(self.speech_status, json={"error": "down"})
+            return httpx.Response(200, json={"text": self.speech})
         body = json.loads(request.content)
         if request.url.host == "chandra":
             self.chandra_requests.append(body)
@@ -296,6 +302,7 @@ def make_settings(**overrides) -> Settings:
         api_keys=frozenset({"secret-key-123"}),
         chandra_url="http://chandra/v1/chat/completions",
         spellfix_url="http://spellfix/spellfix/correct",
+        phowhisper_url="http://phowhisper/v1/audio/transcriptions",
         deskew=False,
         **overrides,
     )
@@ -472,6 +479,7 @@ class Pipeline(unittest.TestCase):
     ENV = {
         "CHANDRA_URL": "http://chandra/v1/chat/completions",
         "SPELLFIX_API_URL": "http://spellfix/spellfix/correct",
+        "PHOWHISPER_URL": "http://phowhisper/v1/audio/transcriptions",
         "DESKEW": "false",
         "SPELL_MODE": "both",
     }
@@ -962,6 +970,241 @@ class DocumentsApi(unittest.TestCase):
             self.assertEqual(c.get("/api/documents", headers=KEY).status_code, 503)
             self.assertEqual(c.get("/api/documents").status_code, 401)
             self.assertEqual(c.get("/api/documents/rid-12345678/pages/1").status_code, 401)
+
+
+def make_wav(*parts, rate=16000, channels=1):
+    """parts: (giây, có tiếng?) nối tiếp nhau."""
+    import io
+    import wave
+
+    import numpy as np
+
+    chunks = []
+    for seconds, loud in parts:
+        t = np.arange(int(seconds * rate)) / rate
+        chunks.append((np.sin(2 * np.pi * 220 * t) * (8000 if loud else 0)).astype(np.int16))
+    audio = np.concatenate(chunks)
+    if channels > 1:
+        audio = np.repeat(audio[:, None], channels, axis=1).reshape(-1)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(audio.tobytes())
+    return buf.getvalue()
+
+
+NO_FFMPEG = mock.patch("shutil.which", return_value=None)
+
+
+class AudioDecode(unittest.TestCase):
+    """Giải mã và cắt đoạn âm thanh."""
+
+    def setUp(self):
+        NO_FFMPEG.start()
+        self.addCleanup(NO_FFMPEG.stop)
+        self.dir = Path(os.environ["TEMP_DIR"]) / "audio-tests"
+        self.dir.mkdir(exist_ok=True)
+
+    def decode(self, data, name="a.wav"):
+        from app.audio.decode import decode_to_pcm, load_pcm
+
+        src = self.dir / name
+        src.write_bytes(data)
+        seconds = decode_to_pcm(src, self.dir / "a.pcm")
+        return seconds, load_pcm(self.dir / "a.pcm")
+
+    def test_wav_is_converted_to_16k_mono_without_ffmpeg(self):
+        seconds, audio = self.decode(make_wav((3, True), rate=44100, channels=2))
+        self.assertAlmostEqual(seconds, 3.0, places=2)
+        self.assertEqual(len(audio), 48000)
+        del audio
+
+    def test_other_formats_need_ffmpeg(self):
+        from app.audio.decode import UnsupportedAudio
+
+        with self.assertRaises(UnsupportedAudio):
+            self.decode(b"ID3 not really an mp3", "a.mp3")
+        with self.assertRaises(UnsupportedAudio):
+            self.decode(b"RIFF broken", "b.wav")
+
+    def test_long_audio_is_cut_at_silence_and_silence_is_skipped(self):
+        from app.audio.decode import SR, segments
+
+        # 20s tiếng, 2s lặng, 20s tiếng, 30s lặng hẳn
+        _, audio = self.decode(make_wav((20, True), (2, False), (20, True), (30, False)))
+        parts = segments(audio, 15, 28, 300)
+        del audio
+        self.assertEqual(len(parts), 2)
+        self.assertTrue(all((p["end"] - p["start"]) / SR <= 28 for p in parts))
+        # Điểm cắt đầu tiên rơi vào khoảng lặng 20-22s
+        self.assertTrue(20 <= parts[0]["end"] / SR <= 22)
+
+
+class SpeechApi(unittest.TestCase):
+    """Speech-to-text đồng bộ với PhoWhisper và ProtonX giả."""
+
+    def setUp(self):
+        NO_FFMPEG.start()
+        self.addCleanup(NO_FFMPEG.stop)
+
+    def post(self, mocks, data, name="ghi am.wav", **overrides):
+        with make_client(mocks, **overrides) as client:
+            return client.post("/api/speech-to-text/sync", headers=KEY, files={"file": (name, data, "audio/wav")},
+                               data={"include_raw": "true"})
+
+    def test_transcript_is_split_timed_and_spellchecked(self):
+        mocks = Mocks(speech="Việc thưc hiện nghị quyết", spellfix=swap("thưc", "thực"))
+        r = self.post(mocks, make_wav((20, True), (2, False), (20, True)))
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual((body["segment_count"], body["duration"]), (2, 42.0))
+        self.assertEqual(body["text"], "Việc thực hiện nghị quyết\nViệc thực hiện nghị quyết")
+        first = body["segments"][0]
+        self.assertEqual((first["index"], first["file"], first["start"]), (1, "ghi am.wav", 0.0))
+        self.assertEqual(first["raw_text"], "Việc thưc hiện nghị quyết")
+        self.assertEqual(first["corrections"], [{"wrong": "thưc", "right": "thực", "by": "protonx"}])
+        change = body["changes"][1]
+        self.assertEqual((change["segment"], change["start"]), (2, body["segments"][1]["start"]))
+        self.assertEqual(change["marked"], "Việc [thưc→thực] hiện nghị quyết")
+        self.assertEqual(body["correction_total"], 2)
+        self.assertEqual(body["input"], {"mode": "speech", "files": [{"file": "ghi am.wav", "duration": 42.0}]})
+        self.assertEqual(len(mocks.speech_requests), 2)
+        # Mặc định ProtonX xem mọi đoạn, kể cả đoạn không có từ lạ
+        self.assertEqual(len(mocks.spellfix_requests[0]["texts"]), 2)
+
+    def test_whisper_line_breaks_are_kept_on_one_line(self):
+        r = self.post(Mocks(speech="Xin chào\nmọi người"), make_wav((5, True)), spell_mode="off")
+        self.assertEqual(r.json()["text"], "Xin chào mọi người")
+
+    def test_silent_audio_returns_an_empty_transcript(self):
+        mocks = Mocks()
+        r = self.post(mocks, make_wav((10, False)))
+        self.assertEqual((r.status_code, r.json()["text"], r.json()["segment_count"]), (200, "", 0))
+        self.assertIn("tiếng nói", r.json()["notice"])
+        self.assertEqual(mocks.speech_requests, [])
+
+    def test_backend_down_is_502_and_bad_file_is_415(self):
+        self.assertEqual(self.post(Mocks(speech_status=503), make_wav((5, True)), spell_mode="off").status_code, 502)
+        self.assertEqual(self.post(Mocks(), b"not audio", name="a.mp3").status_code, 415)
+
+    def test_client_errors_are_not_retried(self):
+        mocks = Mocks(speech_status=400)
+        self.assertEqual(self.post(mocks, make_wav((5, True)), spell_mode="off").status_code, 502)
+        self.assertEqual(len(mocks.speech_requests), 1)
+
+    def test_too_long_audio_is_413(self):
+        self.assertEqual(self.post(Mocks(), make_wav((70, True)), speech_max_minutes=1).status_code, 413)
+
+    def test_async_submit_and_auth(self):
+        body = {"s3_path": "s3://bucket/ghi-am/", "access_key": "AK", "secret_key": "SK", "endpoint": "http://minio:9000"}
+        with make_client(Mocks()) as client, mock.patch("app.api.main.submit_speech") as submit:
+            ok = client.post("/api/speech-to-text", headers=KEY, json=body)
+            self.assertEqual(client.post("/api/speech-to-text", json=body).status_code, 401)
+            self.assertEqual(client.post("/api/speech-to-text/sync", files={"file": ("a.wav", b"x")}).status_code, 401)
+        self.assertEqual(ok.status_code, 202, ok.text)
+        self.assertEqual(submit.call_args.args[0], ok.json()["request_id"])
+        self.assertEqual(submit.call_args.args[1], "s3://bucket/ghi-am/")
+
+
+class SpeechPipeline(unittest.TestCase):
+    """Chạy 4 task Celery speech liên tiếp với S3 và mạng giả."""
+
+    def setUp(self):
+        celery_app.conf.task_always_eager = True
+        celery_app.conf.task_eager_propagates = True
+        self.hooks = []
+        for patch in (NO_FFMPEG, mock.patch.dict(os.environ, Pipeline.ENV)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def run_chain(self, mocks, files, s3_path, request_id):
+        from app.worker import speech_tasks
+
+        class Storage(FakeStorage):
+            def __init__(self, *a, **k):
+                super().__init__(files)
+
+        with mock.patch.object(speech_tasks, "S3Storage", Storage), \
+             mock.patch.object(flow, "make_http_client", mocks.client), \
+             mock.patch.object(tasks, "send_webhook", lambda url, payload, *a: self.hooks.append((url, payload)) or True):
+            return speech_tasks.submit_speech(request_id, s3_path, "AK", "SK", "http://minio:9000", "http://hooks.example/cb", 9, True)
+
+    def test_folder_of_audio_files_in_name_order(self):
+        files = {"phan10.wav": make_wav((3, True)), "phan2.wav": make_wav((4, True)), "ghi-chu.txt": b"x"}
+        result = self.run_chain(Mocks(speech="Xin chào"), files, "s3://bucket/hop/", "req-speech-0001").get()
+        self.assertEqual([f["file"] for f in result["input"]["files"]], ["phan2.wav", "phan10.wav"])
+        self.assertEqual([(s["index"], s["file"]) for s in result["segments"]], [(1, "phan2.wav"), (2, "phan10.wav")])
+        self.assertEqual(result["duration"], 7.0)
+        self.assertNotIn("raw_text", result["segments"][0])
+        (url, payload), = self.hooks
+        self.assertEqual((payload["meta"]["error_code"], payload["data"]["creator"]), (200, "speech-to-text"))
+        self.assertFalse((Path(os.environ["TEMP_DIR"]) / "req-speech-0001").exists())
+
+    def test_no_audio_file_sends_a_415_webhook(self):
+        with self.assertRaises(Exception):
+            self.run_chain(Mocks(), {"a.pdf": b"%PDF-"}, "s3://bucket/hop/", "req-speech-0002")
+        self.assertEqual(self.hooks[0][1]["meta"]["error_code"], 415)
+
+    def test_backend_down_sends_a_502_webhook(self):
+        with self.assertRaises(Exception):
+            self.run_chain(Mocks(speech_status=503), {"a.wav": make_wav((3, True))}, "s3://bucket/a.wav", "req-speech-0003")
+        self.assertEqual(self.hooks[0][1]["meta"]["error_message"], "Speech-to-text backend unavailable")
+
+
+class SpeechStorage(unittest.TestCase):
+    """Lưu và đọc bản chép lời (DB giả)."""
+
+    CREATED = __import__("datetime").datetime(2026, 11, 10, 8, 0)
+    SEGMENTS = [
+        {"index": 1, "file": "a.wav", "start": 0.0, "end": 21.0, "text": "Việc thực hiện", "error": None, "corrections": []},
+        {"index": 2, "file": "a.wav", "start": 21.0, "end": 42.0, "text": "Xin chào", "error": None, "corrections": []},
+    ]
+    CHANGES = [{"segment": 1, "file": "a.wav", "start": 0.0, "end": 21.0, "before": "Việc thưc hiện", "after": "Việc thực hiện",
+                "marked": "Việc [thưc→thực] hiện", "segments": [], "fixes": [{"wrong": "thưc", "right": "thực", "by": "dict"}]}]
+    SUMMARY = ("rid-speech-01", "9", "s3://b/a.wav", 42.0, 2, 1, 0, None, {"mode": "speech"}, CREATED)
+
+    def client(self, answers):
+        conn = ScriptedConn(answers)
+        patch = mock.patch("psycopg2.connect", return_value=conn)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return make_client(Mocks(), pg_host="h", pg_db="d", pg_user="u")
+
+    def answers(self):
+        return [("SELECT request_id", [self.SUMMARY + (self.SEGMENTS, self.CHANGES, [])])]
+
+    def test_save_stores_each_fix_with_its_time(self):
+        conn = FakeConn()
+        result = {"duration": 42.0, "segment_count": 2, "text": "x", "segments": self.SEGMENTS, "correction_total": 1,
+                  "changes": self.CHANGES, "unknown_total": 0, "unknown_words": [], "notice": None, "input": {}}
+        with mock.patch("psycopg2.connect", return_value=conn):
+            self.assertTrue(db.save_transcript(Settings(pg_host="h", pg_db="d", pg_user="u"), "rid", "s3://b/a.wav", 9, result))
+        fixes = [params for sql, params in conn.log if sql.startswith("INSERT INTO speech_corrections")]
+        self.assertEqual(fixes, [("rid", 1, 0.0, 21.0, "thưc", "thực", "dict", "Việc thưc hiện", "Việc thực hiện")])
+        self.assertFalse(db.save_transcript(Settings(), "rid", "s3://b/a.wav", 9, result))
+
+    def test_web_api(self):
+        with self.client([("SELECT count(*)", [(1,)])] + self.answers()) as c:
+            listing = c.get("/api/transcripts", headers=KEY).json()
+            overview = c.get("/api/transcripts/rid-speech-01", headers=KEY).json()
+            changed = c.get("/api/transcripts/rid-speech-01/segments?changed=true", headers=KEY).json()
+            every = c.get("/api/transcripts/rid-speech-01/segments", headers=KEY).json()
+            by_ai = c.get("/api/transcripts/rid-speech-01/changes?by=protonx", headers=KEY).json()
+        self.assertEqual((listing["total"], listing["items"][0]["duration"]), (1, 42.0))
+        self.assertNotIn("segments", overview)
+        self.assertEqual(overview["segment_count"], 2)
+        self.assertEqual(changed["total"], 1)
+        self.assertEqual(changed["items"][0]["before"], "Việc thưc hiện")
+        self.assertEqual([s["changed"] for s in every["items"]], [True, False])
+        self.assertEqual(by_ai["total"], 0)
+
+    def test_missing_transcript_and_no_database(self):
+        with self.client([]) as c:
+            self.assertEqual(c.get("/api/transcripts/nope-1234", headers=KEY).status_code, 404)
+        with make_client(Mocks()) as c:
+            self.assertEqual(c.get("/api/transcripts", headers=KEY).status_code, 503)
 
 
 class Config(unittest.TestCase):
