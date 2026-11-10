@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bật API và worker Celery; cần RabbitMQ, PostgreSQL chạy sẵn.
-# Chandra, ProtonX: chạy sẵn hoặc bật ở đây (START_CHANDRA, START_SPELLFIX). Cấu hình đọc từ .env.
+# Chandra, PhoWhisper, ProtonX: chạy sẵn hoặc bật ở đây (START_CHANDRA, START_PHOWHISPER, START_SPELLFIX). Cấu hình đọc từ .env.
 
 set -u
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -21,10 +21,15 @@ UVICORN="${BIN}uvicorn"
 
 : "${API_PORT:=9090}"
 : "${PREPARE_WORKERS:=2}" "${OCR_WORKERS:=2}" "${SPELL_WORKERS:=2}" "${DB_WORKERS:=2}"
+: "${SPEECH_PREPARE_WORKERS:=1}" "${SPEECH_ASR_WORKERS:=1}" "${SPEECH_SPELL_WORKERS:=1}" "${SPEECH_DB_WORKERS:=1}"
 : "${START_CHANDRA:=false}" "${CHANDRA_CUDA_DEVICE:=0}" "${CHANDRA_PORT:=8101}" "${CHANDRA_MODEL:=datalab-to/chandra-ocr-2}"
 : "${CHANDRA_MAX_MODEL_LEN:=6000}" "${CHANDRA_GPU_MEMORY_UTILIZATION:=0.95}"
 : "${CHANDRA_MAX_NUM_BATCHED_TOKENS:=9216}" "${CHANDRA_MAX_NUM_SEQS:=20}" "${CHANDRA_PREFIX_CACHING:=true}"
 : "${CHANDRA_API_KEY:=}" "${CHANDRA_VLLM_EXTRA_ARGS:=}"
+: "${START_PHOWHISPER:=false}" "${PHOWHISPER_CUDA_DEVICE:=0}" "${PHOWHISPER_PORT:=8120}"
+: "${PHOWHISPER_MODEL:=vinai/PhoWhisper-large}" "${PHOWHISPER_MODEL_NAME:=phowhisper-large}"
+: "${PHOWHISPER_GPU_MEMORY_UTILIZATION:=0.8}" "${PHOWHISPER_MAX_NUM_SEQS:=64}"
+: "${PHOWHISPER_API_KEY:=}" "${PHOWHISPER_VLLM_EXTRA_ARGS:=}"
 : "${START_SPELLFIX:=false}" "${SPELLFIX_CUDA_DEVICE:=0}"
 : "${START_FLOWER:=false}"
 
@@ -40,7 +45,7 @@ command -v "$UVICORN" >/dev/null 2>&1 || fail "uvicorn not found; set VENV_BIN"
 
 LOG_DIR="$PROJECT_DIR/logs"
 RUN_DIR="$PROJECT_DIR/run"
-mkdir -p "$LOG_DIR/api" "$LOG_DIR/prepare" "$LOG_DIR/ocr" "$LOG_DIR/spell" "$LOG_DIR/db" \
+mkdir -p "$LOG_DIR/api" "$LOG_DIR/prepare" "$LOG_DIR/ocr" "$LOG_DIR/spell" "$LOG_DIR/db" "$LOG_DIR/speech" \
          "$PROJECT_DIR/temp_processing" "$RUN_DIR" \
     || fail "cannot create $LOG_DIR, temp_processing or $RUN_DIR; check that $(whoami) owns $PROJECT_DIR"
 [ -w "$LOG_DIR" ] && [ -w "$PROJECT_DIR/temp_processing" ] \
@@ -75,6 +80,10 @@ start_workers fullpage_prepare_queue prepare "$PREPARE_WORKERS" 1
 start_workers fullpage_ocr_queue     ocr     "$OCR_WORKERS"     1
 start_workers fullpage_spell_queue   spell   "$SPELL_WORKERS"   1
 start_workers fullpage_db_queue      db      "$DB_WORKERS"      2
+start_workers speech_prepare_queue   speech  "$SPEECH_PREPARE_WORKERS" 1
+start_workers speech_asr_queue       speech  "$SPEECH_ASR_WORKERS"     1
+start_workers speech_spell_queue     speech  "$SPEECH_SPELL_WORKERS"   1
+start_workers speech_db_queue        speech  "$SPEECH_DB_WORKERS"      2
 
 if [ "$START_CHANDRA" = "true" ]; then
     # Cổng phải khớp CHANDRA_URL
@@ -90,6 +99,21 @@ if [ "$START_CHANDRA" = "true" ]; then
         > "$LOG_DIR/ocr/chandra_$STAMP.log" 2>&1 &
     echo $! >> "$RUN_DIR/workers.pid"
     echo "Chandra (vLLM) on 127.0.0.1:$CHANDRA_PORT, GPU $CHANDRA_CUDA_DEVICE"
+fi
+
+if [ "$START_PHOWHISPER" = "true" ]; then
+    # Cổng phải khớp PHOWHISPER_URL; cần vllm[audio]
+    command -v "${BIN}vllm" >/dev/null 2>&1 || fail "START_PHOWHISPER=true but vllm not found; set VENV_BIN"
+    phowhisper_args=(--host 127.0.0.1 --port "$PHOWHISPER_PORT" --served-model-name "$PHOWHISPER_MODEL_NAME"
+        --dtype float16 --max-model-len 448 --disable-log-stats
+        --gpu-memory-utilization "$PHOWHISPER_GPU_MEMORY_UTILIZATION" --max-num-seqs "$PHOWHISPER_MAX_NUM_SEQS")
+    [ -n "$PHOWHISPER_API_KEY" ] && phowhisper_args+=(--api-key "$PHOWHISPER_API_KEY")
+    # shellcheck disable=SC2086
+    CUDA_VISIBLE_DEVICES="$PHOWHISPER_CUDA_DEVICE" nohup "${BIN}vllm" serve "$PHOWHISPER_MODEL" \
+        "${phowhisper_args[@]}" $PHOWHISPER_VLLM_EXTRA_ARGS \
+        > "$LOG_DIR/speech/phowhisper_$STAMP.log" 2>&1 &
+    echo $! >> "$RUN_DIR/workers.pid"
+    echo "PhoWhisper (vLLM) on 127.0.0.1:$PHOWHISPER_PORT, GPU $PHOWHISPER_CUDA_DEVICE"
 fi
 
 if [ "$START_SPELLFIX" = "true" ]; then
