@@ -113,6 +113,9 @@ class Settings:
 
     result_expires: int = 86400
     temp_dir: str = str(ROOT / "temp_processing")
+    # File tải lên từ máy (API và worker phải dùng chung ổ đĩa); trống = TEMP_DIR/uploads
+    upload_dir: str = ""
+    max_upload_files: int = 200
     # S3 mặc định khi request không gửi khóa
     s3_endpoint: str = ""
     s3_region: str = "us-east-1"
@@ -128,6 +131,10 @@ class Settings:
 
     flower_url: str = "http://localhost:5555"
     celery_bin: str = ""
+
+    @property
+    def uploads_root(self) -> str:
+        return self.upload_dir or str(Path(self.temp_dir) / "uploads")
 
 
 def load_settings() -> Settings:
@@ -205,6 +212,8 @@ def load_settings() -> Settings:
         unknown_max_words=_int("UNKNOWN_MAX_WORDS", d.unknown_max_words),
         result_expires=_int("RESULT_EXPIRES", d.result_expires),
         temp_dir=_path("TEMP_DIR", d.temp_dir),
+        upload_dir=_path("UPLOAD_DIR"),
+        max_upload_files=max(1, _int("MAX_UPLOAD_FILES", d.max_upload_files)),
         s3_endpoint=_str("S3_ENDPOINT"),
         s3_access_key=_str("S3_ACCESS_KEY"),
         s3_secret_key=_str("S3_SECRET_KEY"),

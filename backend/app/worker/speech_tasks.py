@@ -13,7 +13,6 @@ from ..pipeline import fullpage
 from ..pipeline import speech as flow
 from ..storage import db
 from ..storage.files import remove_tree
-from ..storage.s3 import S3Storage
 from . import tasks as common
 from .celery_app import celery_app
 
@@ -45,10 +44,7 @@ def speech_download_task(
     }
     try:
         log.info("[%s] downloading %s", request_id, s3_path)
-        storage = S3Storage(
-            access_key or settings.s3_access_key, secret_key or settings.s3_secret_key,
-            endpoint or settings.s3_endpoint, settings.s3_region, settings.s3_ssl,
-        )
+        storage = common.open_storage(s3_path, access_key, secret_key, endpoint, settings)
         ctx.update(collect_audio(storage, s3_path, folder, settings, flow.prepare_audio))
         log.info("[%s] prepared %d file(s), %d segment(s)", request_id, len(ctx["files"]),
                  sum(len(f["segments"]) for f in ctx["files"]))
@@ -56,6 +52,8 @@ def speech_download_task(
     except Exception as exc:
         common._fail("download", ctx, exc)
         raise
+    finally:
+        common.drop_upload(s3_path, settings)
 
 
 @celery_app.task(name="speech_asr_task", bind=True, max_retries=0)

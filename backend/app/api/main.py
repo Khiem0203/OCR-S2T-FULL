@@ -22,7 +22,7 @@ from ..spell.compare import compare_lines
 from ..worker.celery_app import celery_app
 from ..worker.speech_tasks import submit_speech
 from ..worker.tasks import submit_fullpage
-from . import documents, transcripts
+from . import documents, transcripts, uploads
 from .schemas import (
     FullPageRequest,
     SpeechRequest,
@@ -113,7 +113,7 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
     async def speech_to_text(req: SpeechRequest):
         """Nhận việc chép lời file âm thanh vào hàng đợi."""
         request_id = await queue_job(req, submit_speech, "speech-to-text")
-        return SubmitResponse(error_code=202, error_message="Đã nhận yêu cầu chép lời âm thanh.", request_id=request_id)
+        return SubmitResponse(error_code=202, error_message="Đã nhận yêu cầu trích xuất lời nói.", request_id=request_id)
 
     @api.post("/speech-to-text/sync")
     async def speech_to_text_sync(
@@ -220,6 +220,8 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
     # Cho web xem kết quả
     api.include_router(documents.build_router(settings))
     api.include_router(transcripts.build_router(settings))
+    # Tải file lên từ máy
+    api.include_router(uploads.build_router(settings))
     app.include_router(api)
     return app
 

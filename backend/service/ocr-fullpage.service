@@ -8,11 +8,11 @@ RemainAfterExit=yes
 # User sở hữu thư mục dự án
 User=ocr
 Group=ocr
-WorkingDirectory=/opt/ocr-fullpage
+WorkingDirectory=/opt/ocr-fullpage/backend
 # Khóa nằm trong .env (chmod 600); VENV_BIN trỏ tới venv
-Environment=VENV_BIN=/opt/ocr-fullpage/.venv/bin
-ExecStart=/bin/bash /opt/ocr-fullpage/start-service.sh
-ExecStop=/bin/bash /opt/ocr-fullpage/stop-service.sh
+Environment=VENV_BIN=/opt/ocr-fullpage/backend/.venv/bin
+ExecStart=/bin/bash /opt/ocr-fullpage/backend/start-service.sh
+ExecStop=/bin/bash /opt/ocr-fullpage/backend/stop-service.sh
 TimeoutStopSec=90
 
 [Install]

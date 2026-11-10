@@ -1126,7 +1126,7 @@ class SpeechPipeline(unittest.TestCase):
             def __init__(self, *a, **k):
                 super().__init__(files)
 
-        with mock.patch.object(speech_tasks, "S3Storage", Storage), \
+        with mock.patch.object(tasks, "S3Storage", Storage), \
              mock.patch.object(flow, "make_http_client", mocks.client), \
              mock.patch.object(tasks, "send_webhook", lambda url, payload, *a: self.hooks.append((url, payload)) or True):
             return speech_tasks.submit_speech(request_id, s3_path, "AK", "SK", "http://minio:9000", "http://hooks.example/cb", 9, True)
@@ -1205,6 +1205,93 @@ class SpeechStorage(unittest.TestCase):
             self.assertEqual(c.get("/api/transcripts/nope-1234", headers=KEY).status_code, 404)
         with make_client(Mocks()) as c:
             self.assertEqual(c.get("/api/transcripts", headers=KEY).status_code, 503)
+
+
+class Uploads(unittest.TestCase):
+    """Tải file lên từ máy: nhiều file, cả thư mục, chạy hết chuỗi Celery."""
+
+    def setUp(self):
+        celery_app.conf.task_always_eager = True
+        celery_app.conf.task_eager_propagates = True
+        for patch in (NO_FFMPEG, mock.patch.dict(os.environ, Pipeline.ENV)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.upload_dir = Path(os.environ["TEMP_DIR"]) / "uploads"
+
+    def post(self, path, files, mocks=None, **form):
+        """Gửi upload; trả (response, kết quả của từng việc)."""
+        from app.worker import speech_tasks
+
+        results = []
+
+        def run(submit):
+            def wrapper(*args):
+                r = submit(*args)
+                results.append(r.get())
+                return r
+            return wrapper
+
+        mocks = mocks or Mocks()
+        with mock.patch("app.api.uploads.submit_fullpage", run(tasks.submit_fullpage)), \
+             mock.patch("app.api.uploads.submit_speech", run(speech_tasks.submit_speech)), \
+             mock.patch.object(flow, "make_http_client", mocks.client), \
+             make_client(mocks, spell_mode="off", temp_dir=os.environ["TEMP_DIR"]) as client:
+            data = {k: str(v).lower() for k, v in form.items()}
+            r = client.post(path, headers=KEY, files=[("files", f) for f in files], data=data)
+        return r, results
+
+    def test_each_file_is_its_own_job_and_unsupported_files_are_skipped(self):
+        files = [("a.pdf", make_pdf_pages(GOOD)), ("ghi-chu.txt", "Việc thực hiện nghị quyết".encode()), ("x.zip", b"PK")]
+        r, results = self.post("/api/uploads/ocr", files)
+        self.assertEqual(r.status_code, 202, r.text)
+        body = r.json()
+        self.assertEqual([j["files"] for j in body["jobs"]], [["a.pdf"], ["ghi-chu.txt"]])
+        self.assertEqual(body["skipped"], [{"file": "x.zip", "reason": "unsupported file type"}])
+        self.assertEqual([res["input"]["mode"] for res in results], ["ocr", "text"])
+        self.assertEqual(results[1]["text"], "Việc thực hiện nghị quyết")
+        self.assertEqual(results[0]["pages"][0]["source"], "pdf_text")
+        # File tải lên được dọn sau khi xử lý
+        self.assertEqual(list(self.upload_dir.iterdir()), [])
+
+    def test_a_folder_is_one_document_when_grouped(self):
+        # Thư mục ảnh scan, tên kèm đường dẫn như trình duyệt gửi
+        files = [(f"so-1/trang{n}.png", make_png()) for n in (10, 2, 1)]
+        r, results = self.post("/api/uploads/ocr", files, Mocks("<p>Trang</p>"), group=True)
+        self.assertEqual(len(r.json()["jobs"]), 1)
+        self.assertEqual(results[0]["input"]["files"], ["trang1.png", "trang2.png", "trang10.png"])
+        self.assertEqual(results[0]["page_count"], 3)
+
+    def test_word_file_beside_the_pdf_wins_when_grouped(self):
+        files = [("a.pdf", make_pdf()), ("a.docx", make_docx(["Trang một"]))]
+        _, results = self.post("/api/uploads/ocr", files, group=True)
+        self.assertEqual(results[0]["input"]["mode"], "text")
+
+    def test_speech_upload(self):
+        files = [("phan2.wav", make_wav((3, True))), ("phan1.wav", make_wav((4, True))), ("anh.png", make_png())]
+        r, results = self.post("/api/uploads/speech", files, Mocks(speech="Xin chào"), group=True)
+        self.assertEqual(r.json()["skipped"][0]["file"], "anh.png")
+        self.assertEqual([f["file"] for f in results[0]["input"]["files"]], ["phan1.wav", "phan2.wav"])
+        self.assertEqual(results[0]["text"], "Xin chào\nXin chào")
+
+    def test_bad_uploads(self):
+        r, _ = self.post("/api/uploads/ocr", [("x.zip", b"PK")])
+        self.assertEqual(r.status_code, 415)
+        r, _ = self.post("/api/uploads/ocr", [("a.txt", b"")])
+        self.assertEqual(r.status_code, 422)
+        with make_client(Mocks(), max_upload_files=1, temp_dir=os.environ["TEMP_DIR"]) as client:
+            many = client.post("/api/uploads/ocr", headers=KEY, files=[("files", ("a.txt", b"x")), ("files", ("b.txt", b"y"))])
+            self.assertEqual(many.status_code, 413)
+            self.assertEqual(client.post("/api/uploads/ocr", files=[("files", ("a.txt", b"x"))]).status_code, 401)
+
+    def test_names_are_made_safe(self):
+        from app.storage.local import LocalStorage, safe_name
+
+        self.assertEqual(safe_name("../../etc/passwd"), "passwd")
+        self.assertEqual(safe_name("C:\\\\tai lieu\\\\.hidden.pdf"), "hidden.pdf")
+        storage = LocalStorage(self.upload_dir)
+        for bad in ("upload://../x/", "upload://abc/", "upload://" + "a" * 32 + "/../x"):
+            with self.assertRaises(ValueError):
+                storage.candidates(bad)
 
 
 class Config(unittest.TestCase):

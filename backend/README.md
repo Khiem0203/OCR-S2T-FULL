@@ -1,4 +1,4 @@
-# OCR toàn trang và chép lời âm thanh (Chandra, PhoWhisper + từ điển + ProtonX)
+# OCR toàn trang và trích xuất lời nói (Chandra, PhoWhisper + từ điển + ProtonX)
 
 Phiên bản mới của hệ thống OCR, dựng trên khung của `ocr-qldd` (Celery, RabbitMQ, PostgreSQL, webhook, quản lý worker).
 Chỉ còn một luồng OCR toàn trang (`app/pipeline/fullpage.py`): OCR toàn trang bằng Chandra, sửa chính tả bằng **ProtonX + 3 bộ từ điển**,
@@ -74,8 +74,9 @@ Mọi endpoint `/api/*` cần khóa: `X-API-Key: <khóa>` hoặc `Authorization:
 |---|---|
 | `POST /api/ocr-fullpage` | Nộp việc OCR toàn trang (file nằm trên MinIO/S3). Trả `202` + `request_id`. |
 | `POST /api/ocr-fullpage/sync` | Tải file lên trực tiếp, nhận kết quả ngay (không qua hàng đợi, không lưu DB, không webhook). |
-| `POST /api/speech-to-text` | Nộp việc chép lời âm thanh (file hoặc thư mục trên MinIO/S3). Trả `202` + `request_id`. Xem [Speech-to-text](#speech-to-text). |
+| `POST /api/speech-to-text` | Nộp việc trích xuất lời nói (file hoặc thư mục trên MinIO/S3). Trả `202` + `request_id`. Xem [Speech-to-text](#speech-to-text). |
 | `POST /api/speech-to-text/sync` | Tải file âm thanh lên, nhận bản chép lời ngay. |
+| `POST /api/uploads/ocr`, `POST /api/uploads/speech` | Tải **nhiều file / cả thư mục** từ máy lên rồi xếp hàng như S3. Xem [Tải file lên từ máy](#tải-file-lên-từ-máy). |
 | `GET /api/transcripts`, `/{id}`, `/{id}/segments`, `/{id}/changes` | Bản chép lời đã lưu (cho web). |
 | `POST /api/spellcheck` | Chỉ kiểm tra chính tả một đoạn text, kèm báo cáo từ lạ. |
 | `GET /api/request-status/{id}` | Trạng thái; khi `SUCCESS` trả luôn kết quả. |
@@ -185,6 +186,32 @@ bản đánh dấu `[cũ→mới]` (`marked`) và các từ đã sửa (`fixes`,
 
 Webhook thành công: `{"meta": {"error_code": 200, ...}, "data": {path, document_id, ...kết quả trên}, "request_id": ...}`.
 Webhook lỗi: `meta.error_code` là 404/403/413/415/422/502/500 kèm thông điệp chung (không lộ chi tiết nội bộ).
+
+## Tải file lên từ máy
+
+Thay cho S3: frontend (thư mục `../frontend`) gửi file lên đây. File được lưu vào `UPLOAD_DIR`
+(mặc định `TEMP_DIR/uploads`), rồi chạy đúng 4 bước Celery như S3 với đường dẫn `upload://<id>/`. Phần chọn file
+(ưu tiên Word/txt, thư mục ảnh, thư mục âm thanh) giống hệt S3. Xong bước đầu thì file tải lên bị xóa.
+
+```bash
+# Nhiều file, mỗi file một việc
+curl -H "X-API-Key: $KEY" -F files=@a.pdf -F files=@b.docx localhost:9090/api/uploads/ocr
+# Cả thư mục ảnh là một tài liệu (ảnh là các trang theo tên)
+curl -H "X-API-Key: $KEY" -F group=true $(for f in scan/*.jpg; do printf -- '-F files=@%s ' "$f"; done) localhost:9090/api/uploads/ocr
+# Chép lời, nối các file theo tên
+curl -H "X-API-Key: $KEY" -F group=true -F files=@phan1.m4a -F files=@phan2.m4a localhost:9090/api/uploads/speech
+# → 202 {"jobs": [{"request_id": "3f2a...", "files": ["phan1.m4a", "phan2.m4a"]}], "skipped": []}
+```
+
+| Trường form | Mặc định | Ý nghĩa |
+|---|---|---|
+| `files` | | Một hoặc nhiều file; tên có thể kèm thư mục (`ho-so/trang1.jpg`), chỉ giữ tên file |
+| `group` | `false` | `true`: cả lô là một việc (như thư mục S3); `false`: mỗi file một việc |
+| `spellcheck` | `true` | Sửa chính tả |
+
+File không hỗ trợ được liệt kê trong `skipped`. Giới hạn: `MAX_UPLOAD_FILES` file mỗi lần, mỗi file `MAX_UPLOAD_MB` (OCR) hoặc
+`SPEECH_MAX_UPLOAD_MB` (âm thanh). Theo dõi bằng `GET /api/request-status/{request_id}`.
+API và worker phải dùng chung ổ đĩa `UPLOAD_DIR` (cùng máy là đủ).
 
 ## API cho web
 

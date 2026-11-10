@@ -15,6 +15,7 @@ from ..pipeline import fullpage as flow
 from ..pipeline.pages import TooManyPages, UnsupportedFile
 from ..storage import db
 from ..storage.files import remove_tree
+from ..storage.local import LocalStorage, is_upload
 from ..storage.s3 import FileTooLarge, S3Storage
 from .celery_app import celery_app
 
@@ -49,6 +50,25 @@ def _public_error(exc: Exception) -> tuple[int, str]:
     if isinstance(exc, AllSegmentsFailed):
         return 502, "Speech-to-text backend unavailable"
     return 500, "Processing failed"
+
+
+def open_storage(path: str, access_key: str, secret_key: str, endpoint: str, settings):
+    """upload://... là file tải lên từ máy, còn lại là S3/MinIO."""
+    if is_upload(path):
+        return LocalStorage(settings.uploads_root)
+    return S3Storage(
+        access_key or settings.s3_access_key, secret_key or settings.s3_secret_key,
+        endpoint or settings.s3_endpoint, settings.s3_region, settings.s3_ssl,
+    )
+
+
+def drop_upload(path: str, settings) -> None:
+    """Xóa file tải lên còn lại (file không dùng tới)."""
+    if is_upload(path):
+        try:
+            LocalStorage(settings.uploads_root).cleanup(path)
+        except ValueError:
+            pass
 
 
 def _fail(stage: str, ctx: dict, exc: Exception) -> None:
@@ -98,10 +118,7 @@ def fullpage_download_task(
     }
     try:
         log.info("[%s] downloading %s", request_id, s3_path)
-        storage = S3Storage(
-            access_key or settings.s3_access_key, secret_key or settings.s3_secret_key,
-            endpoint or settings.s3_endpoint, settings.s3_region, settings.s3_ssl,
-        )
+        storage = open_storage(s3_path, access_key, secret_key, endpoint, settings)
         # Có file văn bản dùng được thì lấy text luôn, không thì render để OCR
         ctx.update(collect(storage, s3_path, folder, settings, flow.prepare_pages))
         info = ctx["input"]
@@ -110,6 +127,8 @@ def fullpage_download_task(
     except Exception as exc:
         _fail("download", ctx, exc)
         raise
+    finally:
+        drop_upload(s3_path, settings)
 
 
 @celery_app.task(name="fullpage_ocr_task", bind=True, max_retries=0)
