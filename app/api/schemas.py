@@ -40,6 +40,11 @@ class FullPageRequest(BaseModel):
         return _http_url(v) if v else v
 
 
+class SpeechRequest(FullPageRequest):
+    s3_path: str = Field(..., description="s3://bucket/path/file.m4a or s3://bucket/folder/ (mp3, m4a, wav, flac, ogg, opus, aac, mp4...)")
+    spellcheck: bool = Field(default=True, description="Run the dictionary + ProtonX spelling check on the transcript")
+
+
 class SubmitResponse(BaseModel):
     error_code: int
     error_message: str
