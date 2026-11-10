@@ -4,7 +4,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-QUEUES = ("fullpage_prepare_queue", "fullpage_ocr_queue", "fullpage_spell_queue", "fullpage_db_queue")
+QUEUES = (
+    "fullpage_prepare_queue", "fullpage_ocr_queue", "fullpage_spell_queue", "fullpage_db_queue",
+    "speech_prepare_queue", "speech_asr_queue", "speech_spell_queue", "speech_db_queue",
+)
 
 
 def _str(name: str, default: str = "") -> str:
@@ -45,6 +48,7 @@ class Settings:
     # repr=False: không in khóa ra log
     api_keys: frozenset = field(default=frozenset(), repr=False)
     chandra_api_key: str = field(default="", repr=False)
+    phowhisper_api_key: str = field(default="", repr=False)
     broker_url: str = field(default="", repr=False)
     result_backend: str = field(default="", repr=False)
     pg_password: str = field(default="", repr=False)
@@ -61,6 +65,19 @@ class Settings:
     chandra_max_tokens: int = 4096
     chandra_timeout: float = 300.0
     ocr_concurrency: int = 4
+
+    # Speech-to-text: PhoWhisper (vLLM)
+    phowhisper_url: str = "http://localhost:8120/v1/audio/transcriptions"
+    phowhisper_model: str = "phowhisper-large"
+    phowhisper_timeout: float = 300.0
+    asr_concurrency: int = 16
+    speech_language: str = "vi"
+    speech_min_chunk: float = 15.0
+    speech_max_chunk: float = 28.0
+    speech_silence_level: int = 300
+    speech_max_minutes: int = 360
+    speech_max_upload_mb: int = 500
+    speech_spell_review: str = "all"
 
     spellfix_url: str = "http://localhost:8006/spellfix/correct"
     spellfix_timeout: float = 300.0
@@ -120,7 +137,15 @@ def load_settings() -> Settings:
         raise ValueError("SPELL_MODE must be one of: off, dict, both")
     if review not in ("suspects", "all"):
         raise ValueError("SPELL_REVIEW must be one of: suspects, all")
+    speech_review = _str("SPEECH_SPELL_REVIEW", "all").lower()
+    if speech_review not in ("suspects", "all"):
+        raise ValueError("SPEECH_SPELL_REVIEW must be one of: suspects, all")
     d = Settings()
+    min_chunk = _float("SPEECH_MIN_CHUNK", d.speech_min_chunk)
+    max_chunk = _float("SPEECH_MAX_CHUNK", d.speech_max_chunk)
+    # Whisper chỉ nghe tối đa 30 giây
+    if not 0 < min_chunk < max_chunk <= 30:
+        raise ValueError("need 0 < SPEECH_MIN_CHUNK < SPEECH_MAX_CHUNK <= 30")
     include = _list("UNKNOWN_INCLUDE", ",".join(d.unknown_include))
     bad = set(include) - {"vietnamese", "foreign", "acronym"}
     if bad:
@@ -128,6 +153,7 @@ def load_settings() -> Settings:
     return Settings(
         api_keys=frozenset(k.strip() for k in _str("API_KEYS").split(",") if k.strip()),
         chandra_api_key=_str("CHANDRA_API_KEY"),
+        phowhisper_api_key=_str("PHOWHISPER_API_KEY"),
         broker_url=_str("CELERY_BROKER_URL"),
         result_backend=_str("CELERY_RESULT_BACKEND"),
         pg_password=_str("POSTGRES_PASSWORD"),
@@ -140,6 +166,17 @@ def load_settings() -> Settings:
         chandra_max_tokens=_int("CHANDRA_MAX_TOKENS", d.chandra_max_tokens),
         chandra_timeout=_float("CHANDRA_TIMEOUT", d.chandra_timeout),
         ocr_concurrency=max(1, _int("OCR_CONCURRENCY", d.ocr_concurrency)),
+        phowhisper_url=_str("PHOWHISPER_URL", d.phowhisper_url),
+        phowhisper_model=_str("PHOWHISPER_MODEL_NAME", d.phowhisper_model),
+        phowhisper_timeout=_float("PHOWHISPER_TIMEOUT", d.phowhisper_timeout),
+        asr_concurrency=max(1, _int("ASR_CONCURRENCY", d.asr_concurrency)),
+        speech_language=_str("SPEECH_LANGUAGE", d.speech_language),
+        speech_min_chunk=min_chunk,
+        speech_max_chunk=max_chunk,
+        speech_silence_level=_int("SPEECH_SILENCE_LEVEL", d.speech_silence_level),
+        speech_max_minutes=_int("SPEECH_MAX_MINUTES", d.speech_max_minutes),
+        speech_max_upload_mb=_int("SPEECH_MAX_UPLOAD_MB", d.speech_max_upload_mb),
+        speech_spell_review=speech_review,
         spellfix_url=_str("SPELLFIX_API_URL", d.spellfix_url),
         spellfix_timeout=_float("SPELLFIX_TIMEOUT", d.spellfix_timeout),
         spellfix_concurrency=max(1, _int("SPELLFIX_CONCURRENCY", d.spellfix_concurrency)),
