@@ -1,0 +1,15 @@
+[Unit]
+Description=OCR & speech-to-text frontend
+After=network.target
+
+[Service]
+User=ocr
+Group=ocr
+WorkingDirectory=/opt/ocr-fullpage/frontend
+Environment=VENV_BIN=/opt/ocr-fullpage/backend/.venv/bin
+ExecStart=/bin/bash /opt/ocr-fullpage/frontend/run.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

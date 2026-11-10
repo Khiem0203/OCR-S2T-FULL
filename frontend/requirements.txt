@@ -1,0 +1,4 @@
+# Dùng chung venv với backend là đủ (đã có các gói này)
+starlette
+uvicorn
+httpx

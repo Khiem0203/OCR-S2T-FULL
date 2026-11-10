@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCR &amp; Chép lời</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◧</span>
+      <div>
+        <h1>OCR &amp; Chép lời</h1>
+        <p class="sub">Chandra · PhoWhisper · ProtonX</p>
+      </div>
+    </div>
+    <div class="conn">
+      <span id="health" class="dot" title="Trạng thái backend"></span>
+      <label class="key">
+        <span>API key</span>
+        <input id="apiKey" type="password" placeholder="Nhập API key" autocomplete="off">
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-mode="ocr" role="tab">OCR tài liệu</button>
+      <button class="tab" data-mode="speech" role="tab">Trích xuất lời nói</button>
+    </nav>
+
+    <section class="card">
+      <div id="drop" class="drop">
+        <p class="drop-title">Kéo thả file hoặc thư mục vào đây</p>
+        <p id="hint" class="muted"></p>
+        <div class="actions">
+          <label class="btn">Chọn file<input id="pickFiles" type="file" multiple hidden></label>
+          <label class="btn">Chọn thư mục<input id="pickFolder" type="file" webkitdirectory multiple hidden></label>
+        </div>
+      </div>
+
+      <div id="selection" class="selection" hidden>
+        <div class="selection-head">
+          <strong id="selCount"></strong>
+          <button id="clearSel" class="link">Bỏ chọn tất cả</button>
+        </div>
+        <ul id="selList" class="files"></ul>
+        <p id="selSkipped" class="warn" hidden></p>
+        <div class="options">
+          <label><input id="optGroup" type="checkbox"> <span id="groupLabel"></span></label>
+          <label><input id="optSpell" type="checkbox" checked> Sửa chính tả (ProtonX + từ điển)</label>
+        </div>
+        <div class="submit-row">
+          <button id="submit" class="btn primary">Tải lên &amp; xử lý</button>
+          <div id="progress" class="progress" hidden><div></div><span></span></div>
+        </div>
+        <p id="submitError" class="error" hidden></p>
+      </div>
+    </section>
+
+    <section class="jobs-wrap">
+      <div class="jobs-head">
+        <h2>Việc đã gửi</h2>
+        <button id="clearJobs" class="link">Xóa danh sách</button>
+      </div>
+      <p id="noJobs" class="muted">Chưa có việc nào.</p>
+      <ul id="jobs" class="jobs"></ul>
+    </section>
+
+    <section id="viewer" class="card viewer" hidden>
+      <div class="viewer-head">
+        <div>
+          <h2 id="vTitle"></h2>
+          <p id="vMeta" class="muted"></p>
+        </div>
+        <div class="actions">
+          <button id="vDownload" class="btn">Tải .txt</button>
+          <button id="vClose" class="btn">Đóng</button>
+        </div>
+      </div>
+      <p id="vNotice" class="notice" hidden></p>
+      <audio id="vAudio" controls hidden></audio>
+      <nav class="tabs small" id="vTabs">
+        <button class="tab active" data-view="text">Văn bản</button>
+        <button class="tab" data-view="changes">Chỗ đã sửa <span id="vChangeCount" class="pill"></span></button>
+        <button class="tab" data-view="unknown">Từ lạ <span id="vUnknownCount" class="pill"></span></button>
+        <button class="tab" data-view="input">Đầu vào</button>
+      </nav>
+      <div id="vBody" class="vbody"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
