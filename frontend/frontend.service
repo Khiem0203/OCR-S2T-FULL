@@ -6,8 +6,8 @@ After=network.target
 User=ocr
 Group=ocr
 WorkingDirectory=/opt/ocr-fullpage/frontend
-Environment=VENV_BIN=/opt/ocr-fullpage/backend/.venv/bin
-ExecStart=/bin/bash /opt/ocr-fullpage/frontend/run.sh
+Environment="BACKEND_URL=http://127.0.0.1:9090"
+ExecStart=/opt/ocr-fullpage/backend/.venv/bin/uvicorn server:app --host 0.0.0.0 --port 8080 --proxy-headers
 Restart=always
 RestartSec=5
 

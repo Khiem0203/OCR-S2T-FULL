@@ -8,16 +8,16 @@ Group=cntt
 WorkingDirectory=/home/cntt/ocr-fullpage/backend
 Environment="PATH=/home/cntt/.venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="HF_HUB_OFFLINE=1"
-# Giá trị mặc định; .env ghi đè
-Environment="PHOWHISPER_MODEL=vinai/PhoWhisper-large" "PHOWHISPER_MODEL_NAME=phowhisper-large"
-Environment="PHOWHISPER_CUDA_DEVICE=0" "PHOWHISPER_PORT=8120" "PHOWHISPER_GPU_MEMORY_UTILIZATION=0.8"
-Environment="PHOWHISPER_MAX_NUM_SEQS=64" "PHOWHISPER_API_KEY=" "PHOWHISPER_VLLM_EXTRA_ARGS="
-EnvironmentFile=/home/cntt/ocr-fullpage/backend/.env
-ExecStart=/bin/bash -c 'args=(--host 127.0.0.1 --port "$${PHOWHISPER_PORT}" --served-model-name "$${PHOWHISPER_MODEL_NAME}" \
-    --dtype float16 --max-model-len 448 --disable-log-stats \
-    --gpu-memory-utilization "$${PHOWHISPER_GPU_MEMORY_UTILIZATION}" --max-num-seqs "$${PHOWHISPER_MAX_NUM_SEQS}"); \
-    [ -n "$${PHOWHISPER_API_KEY}" ] && args+=(--api-key "$${PHOWHISPER_API_KEY}"); \
-    CUDA_VISIBLE_DEVICES="$${PHOWHISPER_CUDA_DEVICE}" exec /home/cntt/.venv/bin/vllm serve "$${PHOWHISPER_MODEL}" "$${args[@]}" $${PHOWHISPER_VLLM_EXTRA_ARGS}'
+Environment="CUDA_VISIBLE_DEVICES=0"
+ExecStart=/home/cntt/.venv/bin/vllm serve vinai/PhoWhisper-large \
+    --host 0.0.0.0 \
+    --port 8120 \
+    --served-model-name phowhisper-large \
+    --dtype float16 \
+    --max-model-len 448 \
+    --gpu-memory-utilization 0.5 \
+    --max-num-seqs 64 \
+    --disable-log-stats
 Restart=always
 RestartSec=10
 
