@@ -1,4 +1,4 @@
-"""API cho web xem bản chép lời: danh sách, các đoạn, các chỗ đã sửa."""
+"""API cho web: bản chép lời đã lưu."""
 import asyncio
 from typing import Literal
 
@@ -47,7 +47,7 @@ def build_router(settings: Settings) -> APIRouter:
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
     ):
-        """Các đoạn theo thời gian; đoạn bị sửa có bản trước và đoạn tô màu."""
+        """Các đoạn theo thời gian, đoạn bị sửa kèm bản trước."""
         doc = await load(request_id)
         fixed = {c["segment"]: c for c in doc["changes"]}
         items = []
@@ -72,7 +72,7 @@ def build_router(settings: Settings) -> APIRouter:
         limit: int = Query(50, ge=1, le=500),
         offset: int = Query(0, ge=0),
     ):
-        """Các đoạn đã sửa, lọc theo file hoặc theo cách sửa."""
+        """Các đoạn đã sửa, lọc theo file hoặc cách sửa."""
         doc = await load(request_id)
         items = [c for c in doc["changes"] if not file or c["file"] == file]
         if by:

@@ -1,4 +1,4 @@
-"""Luồng speech-to-text: giải mã, cắt đoạn, PhoWhisper, sửa chính tả, báo từ lạ."""
+"""Luồng trích xuất lời nói."""
 import asyncio
 import logging
 import tempfile
@@ -33,7 +33,7 @@ def build_phowhisper(settings: Settings, http: httpx.AsyncClient) -> PhoWhisperC
 
 
 def prepare_audio(src: Path, out_dir: Path, settings: Settings, index: int, used_seconds: float = 0.0) -> dict:
-    """Giải mã một file ra PCM và tính các đoạn cần chép lời."""
+    """Giải mã một file và cắt đoạn."""
     pcm = out_dir / f"audio_{index:03d}.pcm"
     seconds = decode_to_pcm(src, pcm)
     if used_seconds + seconds > settings.speech_max_minutes * 60:
@@ -52,7 +52,7 @@ def new_segment(index: int, file: str, start: int, end: int) -> dict:
 
 
 async def transcribe_files(files: list[dict], settings: Settings, http: httpx.AsyncClient) -> list[dict]:
-    """Gửi song song mọi đoạn của mọi file; kết quả theo đúng thứ tự."""
+    """Chép lời song song mọi đoạn, giữ thứ tự."""
     client = build_phowhisper(settings, http)
     jobs = []
     for f in files:
@@ -64,7 +64,7 @@ async def transcribe_files(files: list[dict], settings: Settings, http: httpx.As
         start, end = int(seg["start"] * SR), int(seg["end"] * SR)
         try:
             wav = await asyncio.to_thread(wav_bytes, audio[start:end])
-            # Whisper đôi khi xuống dòng: mỗi đoạn giữ một dòng
+            # Mỗi đoạn một dòng
             seg["raw_text"] = " ".join((await client.transcribe(wav)).split())
         except PhoWhisperError:
             log.warning("segment %d: ASR backend failed", seg["index"])
@@ -85,7 +85,7 @@ async def transcribe_files(files: list[dict], settings: Settings, http: httpx.As
 
 
 async def postprocess(segs: list[dict], spell: SpellChecker | None) -> list[dict]:
-    """Sửa chính tả cả bản chép lời (mỗi đoạn một dòng); trả các dòng đã sửa kèm thời gian."""
+    """Sửa chính tả; trả các đoạn đã sửa kèm thời gian."""
     if spell is None or not segs:
         return []
     raw = "\n".join(s["raw_text"] for s in segs)
@@ -111,7 +111,7 @@ def finalize(files: list[dict], segs: list[dict], changes: list[dict], settings:
         unknown, unknown_total = find_unknown_words(
             pages, lexicon, settings.unknown_include, settings.unknown_min_len, settings.unknown_max_words
         )
-        # Với âm thanh, "trang" là số thứ tự đoạn
+        # "trang" ở đây là số đoạn
         unknown = [{**{k: v for k, v in w.items() if k != "pages"}, "segments": w["pages"]} for w in unknown]
         notice = build_notice(unknown, unknown_total)
     if not segs:
@@ -133,7 +133,7 @@ def finalize(files: list[dict], segs: list[dict], changes: list[dict], settings:
 
 
 def build_speech_spell_checker(settings: Settings, http: httpx.AsyncClient) -> SpellChecker | None:
-    # Whisper ra âm tiết đúng chính tả nhưng sai từ: mặc định cho ProtonX xem mọi đoạn
+    # Mặc định ProtonX xem mọi đoạn
     return build_spell_checker(settings, http, review=settings.speech_spell_review)
 
 

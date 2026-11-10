@@ -1,6 +1,5 @@
 #!/bin/bash
-# Bật API và worker Celery; cần RabbitMQ, PostgreSQL chạy sẵn.
-# Chandra, PhoWhisper, ProtonX: chạy sẵn hoặc bật ở đây (START_CHANDRA, START_PHOWHISPER, START_SPELLFIX). Cấu hình đọc từ .env.
+# Bật API và worker; cần RabbitMQ, PostgreSQL chạy sẵn. Cấu hình đọc từ .env.
 
 set -u
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -86,7 +85,6 @@ start_workers speech_spell_queue     speech  "$SPEECH_SPELL_WORKERS"   1
 start_workers speech_db_queue        speech  "$SPEECH_DB_WORKERS"      2
 
 if [ "$START_CHANDRA" = "true" ]; then
-    # Cổng phải khớp CHANDRA_URL
     command -v "${BIN}vllm" >/dev/null 2>&1 || fail "START_CHANDRA=true but vllm not found; set VENV_BIN"
     chandra_args=(--host 127.0.0.1 --port "$CHANDRA_PORT" --trust-remote-code --disable-log-stats
         --max-model-len "$CHANDRA_MAX_MODEL_LEN" --gpu-memory-utilization "$CHANDRA_GPU_MEMORY_UTILIZATION"
@@ -102,7 +100,7 @@ if [ "$START_CHANDRA" = "true" ]; then
 fi
 
 if [ "$START_PHOWHISPER" = "true" ]; then
-    # Cổng phải khớp PHOWHISPER_URL; cần vllm[audio]
+    # Cần vllm[audio]
     command -v "${BIN}vllm" >/dev/null 2>&1 || fail "START_PHOWHISPER=true but vllm not found; set VENV_BIN"
     phowhisper_args=(--host 127.0.0.1 --port "$PHOWHISPER_PORT" --served-model-name "$PHOWHISPER_MODEL_NAME"
         --dtype float16 --max-model-len 448 --disable-log-stats
@@ -117,7 +115,7 @@ if [ "$START_PHOWHISPER" = "true" ]; then
 fi
 
 if [ "$START_SPELLFIX" = "true" ]; then
-    # Không có xác thực: chỉ nghe localhost
+    # Chỉ nghe localhost
     SPELLFIX_CUDA_DEVICE="$SPELLFIX_CUDA_DEVICE" nohup "${BIN}uvicorn" app.services.spellfix_api:app --host 127.0.0.1 --port 8006 \
         > "$LOG_DIR/spell/spellfix_$STAMP.log" 2>&1 &
     echo $! >> "$RUN_DIR/workers.pid"

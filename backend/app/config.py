@@ -89,12 +89,12 @@ class Settings:
     max_pages: int = 100
     max_upload_mb: int = 50
     pdf_text_fallback: bool = True
-    # Đầu vào: ưu tiên file văn bản (docx, doc, txt...) rồi mới OCR
+    # Đầu vào: ưu tiên file văn bản rồi mới OCR
     text_first: bool = True
     input_siblings: bool = True
     text_page_chars: int = 3000
     spell_text_files: bool = False
-    # Lấy text PDF trực tiếp; có lỗi Unicode thì OCR cả file
+    # Lấy text PDF; lỗi Unicode thì OCR cả file
     pdf_text_first: bool = True
     pdf_text_min_known: float = 0.9
 
@@ -113,10 +113,10 @@ class Settings:
 
     result_expires: int = 86400
     temp_dir: str = str(ROOT / "temp_processing")
-    # File tải lên từ máy (API và worker phải dùng chung ổ đĩa); trống = TEMP_DIR/uploads
+    # File tải lên; trống = TEMP_DIR/uploads
     upload_dir: str = ""
     max_upload_files: int = 200
-    # S3 mặc định khi request không gửi khóa
+    # S3 mặc định
     s3_endpoint: str = ""
     s3_region: str = "us-east-1"
     s3_ssl: bool = False

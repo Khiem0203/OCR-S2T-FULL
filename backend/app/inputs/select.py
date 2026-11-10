@@ -1,4 +1,4 @@
-"""Chọn file đầu vào: ưu tiên file văn bản, không có mới OCR."""
+"""Chọn file đầu vào."""
 import posixpath
 import re
 
@@ -37,10 +37,7 @@ def natural_key(name: str) -> list:
 
 
 def plan(names: list[str], requested: str = "") -> tuple[list[str], list[str]]:
-    """Trả (file văn bản theo thứ tự thử, file cần OCR).
-
-    requested: file người dùng chỉ định; rỗng là cả thư mục.
-    """
+    """Trả (file văn bản theo thứ tự thử, file cần OCR); requested rỗng là cả thư mục."""
     names = [n for n in dict.fromkeys(names) if kind(n)]
     texts = [n for n in names if kind(n) == "text"]
     texts.sort(key=lambda n: (stem(n) != stem(requested) if requested else False,
@@ -48,5 +45,5 @@ def plan(names: list[str], requested: str = "") -> tuple[list[str], list[str]]:
     if requested and kind(requested) in ("pdf", "image"):
         return texts, [requested]
     pdfs = sorted((n for n in names if kind(n) == "pdf"), key=natural_key)
-    # Có PDF thì chỉ OCR PDF, không thì OCR ảnh (mỗi ảnh một trang)
+    # Có PDF thì OCR PDF, không thì OCR ảnh
     return texts, pdfs or sorted((n for n in names if kind(n) == "image"), key=natural_key)

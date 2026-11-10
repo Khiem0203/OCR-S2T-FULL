@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dừng các tiến trình start-service.sh đã bật (PID trong run/).
+# Dừng các tiến trình start-service.sh đã bật.
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUN_DIR="$PROJECT_DIR/run"

@@ -1,4 +1,4 @@
-"""Chuỗi Celery: tải, OCR, chính tả, lưu DB, webhook."""
+"""Chuỗi Celery OCR."""
 import asyncio
 import time
 from datetime import datetime, timezone
@@ -53,7 +53,7 @@ def _public_error(exc: Exception) -> tuple[int, str]:
 
 
 def open_storage(path: str, access_key: str, secret_key: str, endpoint: str, settings):
-    """upload://... là file tải lên từ máy, còn lại là S3/MinIO."""
+    """upload:// là file tải lên, còn lại là S3."""
     if is_upload(path):
         return LocalStorage(settings.uploads_root)
     return S3Storage(
@@ -63,7 +63,7 @@ def open_storage(path: str, access_key: str, secret_key: str, endpoint: str, set
 
 
 def drop_upload(path: str, settings) -> None:
-    """Xóa file tải lên còn lại (file không dùng tới)."""
+    """Xóa file tải lên còn sót."""
     if is_upload(path):
         try:
             LocalStorage(settings.uploads_root).cleanup(path)
@@ -119,7 +119,7 @@ def fullpage_download_task(
     try:
         log.info("[%s] downloading %s", request_id, s3_path)
         storage = open_storage(s3_path, access_key, secret_key, endpoint, settings)
-        # Có file văn bản dùng được thì lấy text luôn, không thì render để OCR
+        # Có file văn bản thì lấy text, không thì render để OCR
         ctx.update(collect(storage, s3_path, folder, settings, flow.prepare_pages))
         info = ctx["input"]
         log.info("[%s] input %s from %s", request_id, info["mode"], ", ".join(info["files"]))

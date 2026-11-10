@@ -1,4 +1,4 @@
-"""Frontend: phục vụ trang web tĩnh và chuyển tiếp /api sang backend (khỏi cần CORS)."""
+"""Trang web tĩnh + chuyển tiếp /api sang backend."""
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,10 +13,10 @@ from starlette.staticfiles import StaticFiles
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:9090").rstrip("/")
 PUBLIC = Path(__file__).resolve().parent / "public"
-# Header chỉ có nghĩa trên từng chặng kết nối, không chuyển tiếp
+# Header không chuyển tiếp
 HOP = {"host", "connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization"}
 
-# Upload lớn và việc chạy lâu: không giới hạn thời gian đọc
+# Không giới hạn thời gian đọc (upload lớn)
 client = httpx.AsyncClient(base_url=BACKEND_URL, timeout=httpx.Timeout(None, connect=10))
 
 

@@ -1,4 +1,4 @@
-"""Tải file lên từ máy (nhiều file hoặc cả thư mục) rồi đưa vào hàng đợi như S3."""
+"""Nhận file tải lên từ máy rồi xếp hàng như S3."""
 import asyncio
 import logging
 import uuid
@@ -31,7 +31,7 @@ def build_router(settings: Settings) -> APIRouter:
         skipped = [{"file": safe_name(f.filename), "reason": "unsupported file type"} for f in skipped]
         if not usable:
             raise HTTPException(status_code=415, detail="no supported file in the upload")
-        # Gộp: cả lô là một tài liệu (như thư mục S3); không gộp: mỗi file một việc
+        # Gộp: cả lô một việc; không gộp: mỗi file một việc
         batches = [usable] if group else [[f] for f in usable]
         jobs = []
         for batch in batches:
@@ -59,7 +59,7 @@ def build_router(settings: Settings) -> APIRouter:
         group: bool = Form(False),
         spellcheck: bool = Form(True),
     ):
-        """OCR file tải lên: PDF, ảnh, docx, doc, txt... group=true thì cả lô là một tài liệu."""
+        """OCR file tải lên; group=true thì cả lô là một tài liệu."""
         return await accept(files, OCR_KINDS, settings.max_upload_mb, group, spellcheck, submit_fullpage)
 
     @router.post("/speech", status_code=202)
@@ -68,7 +68,7 @@ def build_router(settings: Settings) -> APIRouter:
         group: bool = Form(False),
         spellcheck: bool = Form(True),
     ):
-        """Chép lời file âm thanh tải lên. group=true thì cả lô là một bản chép lời (theo tên file)."""
+        """Trích xuất lời nói; group=true thì nối các file theo tên."""
         return await accept(files, ("audio",), settings.speech_max_upload_mb, group, spellcheck, submit_speech)
 
     return router

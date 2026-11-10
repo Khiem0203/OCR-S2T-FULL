@@ -145,7 +145,7 @@ def list_documents(settings: Settings, limit: int, offset: int, document_id: str
 
 
 def get_document(settings: Settings, request_id: str) -> dict | None:
-    """Một tài liệu đầy đủ: trang, các dòng đã sửa, từ lạ; None nếu không có."""
+    """Một tài liệu đầy đủ; None nếu không có."""
     conn = connect(settings)
     try:
         with conn, conn.cursor() as cur:
@@ -246,7 +246,7 @@ def save_transcript(settings: Settings, request_id: str, s3_path: str, document_
                     Json(result.get("input")),
                 ),
             )
-            # Mỗi từ đã sửa một dòng, kèm thời gian của đoạn
+            # Mỗi từ đã sửa một dòng
             cur.execute("DELETE FROM speech_corrections WHERE request_id = %s", (request_id,))
             for ch in result["changes"]:
                 for fx in ch["fixes"]:
@@ -287,7 +287,7 @@ def list_transcripts(settings: Settings, limit: int, offset: int, document_id: s
 
 
 def get_transcript(settings: Settings, request_id: str) -> dict | None:
-    """Một bản chép lời đầy đủ: các đoạn, dòng đã sửa, từ lạ; None nếu không có."""
+    """Một bản chép lời đầy đủ; None nếu không có."""
     conn = connect(settings)
     try:
         with conn, conn.cursor() as cur:

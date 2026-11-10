@@ -3,7 +3,7 @@ import difflib
 
 
 def segments(before: str, after: str, fixes: list[dict] = ()) -> list[dict]:
-    """Chia dòng thành đoạn giữ nguyên / đoạn đã sửa để web tô màu; các đoạn nối bằng 1 dấu cách."""
+    """Chia dòng thành đoạn giữ nguyên / đã sửa để tô màu."""
     old, new = before.split(" "), after.split(" ")
     out = []
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
@@ -23,7 +23,7 @@ def mark_changes(before: str, after: str) -> str:
 
 
 def compare_lines(raw: str, text: str, corrections: list[dict]) -> list[dict]:
-    """Các dòng bị sửa: trước, sau, bản đánh dấu, đoạn tô màu và các từ đã sửa."""
+    """Các dòng bị sửa kèm bản trước/sau và từ đã sửa."""
     fixes: dict[int, list[dict]] = {}
     for c in corrections:
         fixes.setdefault(c["line"], []).append({"wrong": c["wrong"], "right": c["right"], "by": c["by"]})

@@ -1,4 +1,4 @@
-"""Giải mã âm thanh ra PCM 16 kHz mono, cắt đoạn ở chỗ lặng."""
+"""Giải mã âm thanh, cắt đoạn ở chỗ lặng."""
 import io
 import shutil
 import subprocess
@@ -39,7 +39,7 @@ def _wav_fallback(src: Path, dest: Path) -> None:
 
 
 def decode_to_pcm(src: str | Path, dest: str | Path) -> float:
-    """Ghi PCM s16le 16 kHz mono ra dest (không giữ trong RAM); trả số giây."""
+    """Ghi PCM 16 kHz mono ra dest; trả số giây."""
     src, dest = Path(src), Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if shutil.which("ffmpeg"):
@@ -58,12 +58,12 @@ def decode_to_pcm(src: str | Path, dest: str | Path) -> float:
 
 
 def load_pcm(path: str | Path) -> np.ndarray:
-    """Đọc PCM bằng memmap để không nạp cả file vào RAM."""
+    """Đọc PCM bằng memmap (không nạp cả file)."""
     return np.memmap(path, dtype=np.int16, mode="r")
 
 
 def cut_points(audio: np.ndarray, min_s: float, max_s: float) -> list[int]:
-    """Điểm cắt: mỗi đoạn dài min_s..max_s giây, cắt ở khung năng lượng thấp nhất."""
+    """Điểm cắt: đoạn dài min_s..max_s giây, cắt ở chỗ lặng nhất."""
     n = len(audio) // FRAME
     if n == 0:
         return [0, len(audio)]
@@ -78,7 +78,7 @@ def cut_points(audio: np.ndarray, min_s: float, max_s: float) -> list[int]:
 
 
 def segments(audio: np.ndarray, min_s: float, max_s: float, silence_level: int) -> list[dict]:
-    """Các đoạn cần chép lời; đoạn gần như im lặng bị bỏ để Whisper không bịa chữ."""
+    """Các đoạn cần chép lời; bỏ đoạn im lặng để Whisper không bịa chữ."""
     cuts = cut_points(audio, min_s, max_s)
     out = []
     for a, b in zip(cuts, cuts[1:]):

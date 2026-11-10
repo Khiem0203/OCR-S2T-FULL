@@ -93,7 +93,7 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
             raise HTTPException(status_code=400, detail="callback_url host is not allowed")
         access_key = req.access_key.get_secret_value() if req.access_key else ""
         secret_key = req.secret_key.get_secret_value() if req.secret_key else ""
-        # Thiếu thì worker lấy từ .env; khóa trong .env không đi qua RabbitMQ
+        # Thiếu thì worker lấy từ .env (khóa không qua RabbitMQ)
         if not ((access_key or settings.s3_access_key) and (secret_key or settings.s3_secret_key) and (req.endpoint or settings.s3_endpoint)):
             raise HTTPException(status_code=400, detail="S3 access_key, secret_key and endpoint are required (in the request or in .env)")
         request_id = uuid.uuid4().hex
@@ -111,7 +111,7 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
 
     @api.post("/speech-to-text", response_model=SubmitResponse, status_code=202)
     async def speech_to_text(req: SpeechRequest):
-        """Nhận việc chép lời file âm thanh vào hàng đợi."""
+        """Nhận việc trích xuất lời nói vào hàng đợi."""
         request_id = await queue_job(req, submit_speech, "speech-to-text")
         return SubmitResponse(error_code=202, error_message="Đã nhận yêu cầu trích xuất lời nói.", request_id=request_id)
 
@@ -122,7 +122,7 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
         spellcheck: bool = Form(True),
         include_raw: bool = Form(False),
     ):
-        """Chép lời file âm thanh tải lên, trả kết quả ngay."""
+        """Trích xuất lời nói từ file tải lên, trả kết quả ngay."""
         data = await _read_limited(file, settings.speech_max_upload_mb * 1024 * 1024)
         try:
             return await speech.process_audio(data, file.filename or "audio", settings, request.app.state.http,
@@ -141,7 +141,7 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
         spellcheck: bool = Form(True),
         include_raw: bool = Form(False),
     ):
-        """OCR file tải lên (PDF, ảnh) hoặc đọc text (docx, doc, txt...), trả kết quả ngay."""
+        """OCR hoặc đọc text file tải lên, trả kết quả ngay."""
         data = await _read_limited(file, settings.max_upload_mb * 1024 * 1024)
         try:
             return await flow.process_document(data, settings, request.app.state.http, spellcheck=spellcheck, include_raw=include_raw, filename=file.filename or "")
@@ -182,7 +182,7 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
             return {"request_id": request_id, "status": state, "error": str(res.result)}
         return {"request_id": request_id, "status": state}
 
-    # Quản lý worker (qua Flower)
+    # Quản lý worker
 
     def _run(fn, **kwargs):
         return asyncio.get_running_loop().run_in_executor(None, partial(fn, **kwargs))

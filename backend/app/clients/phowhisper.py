@@ -1,4 +1,4 @@
-"""Client PhoWhisper chạy trên vLLM (/v1/audio/transcriptions)."""
+"""Client PhoWhisper (vLLM)."""
 import asyncio
 import logging
 
@@ -24,7 +24,7 @@ class PhoWhisperClient:
         self._sem = asyncio.Semaphore(concurrency)
 
     async def transcribe(self, wav: bytes) -> str:
-        """Chép lời một đoạn wav ≤ 30 giây; lỗi mạng / 5xx thì thử lại, 4xx báo luôn."""
+        """Chép lời một đoạn wav; lỗi mạng/5xx thử lại, 4xx báo luôn."""
         data = {"model": self._model, "language": self._language, "temperature": "0", "response_format": "json"}
         last = "error"
         for attempt in range(self._retries + 1):

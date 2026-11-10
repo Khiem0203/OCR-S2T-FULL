@@ -1,7 +1,6 @@
-"""Service sửa chính tả ProtonX (T5, chạy bằng transformers; vLLM không hỗ trợ).
+"""Service ProtonX (transformers); chỉ nghe localhost.
 
 Chạy: uvicorn app.services.spellfix_api:app --host 127.0.0.1 --port 8006
-Không có xác thực: chỉ nghe localhost.
 """
 import json
 import logging

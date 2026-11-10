@@ -24,7 +24,7 @@ def endpoint_url(endpoint: str, ssl: bool) -> str:
 
 
 class S3Storage:
-    """Liệt kê và tải file trong một bucket; khóa chỉ giữ trong bộ nhớ."""
+    """Liệt kê và tải file; khóa chỉ giữ trong bộ nhớ."""
 
     def __init__(self, access_key: str, secret_key: str, endpoint: str, region: str, ssl: bool = False):
         import boto3
@@ -47,7 +47,7 @@ class S3Storage:
         )
 
     def list_folder(self, bucket: str, prefix: str) -> list[str]:
-        """Các key ngay trong thư mục (không vào thư mục con)."""
+        """Các key trong thư mục (không vào thư mục con)."""
         keys, token = [], None
         while True:
             kwargs = {"Bucket": bucket, "Prefix": prefix, "Delimiter": "/"}
@@ -60,10 +60,7 @@ class S3Storage:
             token = page["NextContinuationToken"]
 
     def candidates(self, s3_path: str, siblings: bool = True) -> tuple[str, list[str], str]:
-        """Trả (bucket, các key, key được chỉ định; rỗng nếu là thư mục).
-
-        Chỉ định một file thì lấy thêm file cùng tên khác đuôi trong cùng thư mục.
-        """
+        """Trả (bucket, các key, key chỉ định); một file thì lấy thêm file cùng tên khác đuôi."""
         bucket, key = parse_s3_path(s3_path)
         if key.endswith("/"):
             return bucket, self.list_folder(bucket, key), ""
@@ -73,7 +70,7 @@ class S3Storage:
         try:
             keys = self.list_folder(bucket, folder)
         except Exception:
-            # Không có quyền liệt kê thì chỉ lấy đúng file
+            # Không được liệt kê thì chỉ lấy đúng file
             return bucket, [key], key
         name = os.path.splitext(os.path.basename(key))[0].lower()
         same = [k for k in keys if k != key and os.path.splitext(os.path.basename(k))[0].lower() == name]

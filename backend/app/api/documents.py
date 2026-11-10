@@ -1,4 +1,4 @@
-"""API cho web xem kết quả: tài liệu, từng trang, các chỗ đã sửa."""
+"""API cho web: tài liệu OCR đã lưu."""
 import asyncio
 from typing import Literal
 
@@ -55,7 +55,7 @@ def build_router(settings: Settings) -> APIRouter:
 
     @router.get("/{request_id}/pages/{page}")
     async def get_page(request_id: str, page: int):
-        """Toàn bộ dòng của một trang; dòng bị sửa có bản trước, đoạn tô màu và từ đã sửa."""
+        """Mọi dòng của một trang, dòng bị sửa kèm bản trước."""
         doc = await load(request_id)
         found = next((p for p in doc["pages"] if p["page"] == page), None)
         if found is None:
@@ -87,7 +87,7 @@ def build_router(settings: Settings) -> APIRouter:
         limit: int = Query(50, ge=1, le=500),
         offset: int = Query(0, ge=0),
     ):
-        """Các dòng đã sửa, lọc theo trang hoặc theo cách sửa."""
+        """Các dòng đã sửa, lọc theo trang hoặc cách sửa."""
         doc = await load(request_id)
         items = [c for c in doc["changes"] if page is None or c["page"] == page]
         if by:

@@ -1,4 +1,4 @@
-"""Đọc text có sẵn từ file văn bản: docx, doc, odt, rtf, txt."""
+"""Đọc text từ file văn bản."""
 import logging
 import re
 import subprocess
@@ -42,7 +42,7 @@ def looks_like_tcvn3(text: str) -> bool:
 
 
 def convert_tcvn3(text: str, assume: bool | None = None) -> str:
-    """Đổi TCVN3 sang Unicode; dòng đã có chữ Unicode thì giữ nguyên."""
+    """Đổi TCVN3 sang Unicode."""
     if not text or not (looks_like_tcvn3(text) if assume is None else assume):
         return text
     return "\n".join(
@@ -51,7 +51,7 @@ def convert_tcvn3(text: str, assume: bool | None = None) -> str:
 
 
 def quality_problem(pages: list[str]) -> str:
-    """Lý do text không dùng được; rỗng nếu dùng được."""
+    """Lý do không dùng được; rỗng nếu dùng được."""
     text = "\n".join(pages)
     visible = sum(not c.isspace() for c in text)
     if not visible:
@@ -66,7 +66,7 @@ def quality_problem(pages: list[str]) -> str:
 
 
 def split_pages(text: str, page_chars: int) -> list[str]:
-    """Chia text dài thành trang ảo theo dòng."""
+    """Chia text dài thành trang ảo."""
     pages, current, size = [], [], 0
     for line in text.strip().split("\n"):
         if current and size + len(line) > page_chars:
@@ -140,7 +140,7 @@ def _para_text(para) -> str:
 
 
 def read_docx(path: str | Path) -> list[str]:
-    """Đọc docx theo trang (ngắt trang của Word), gồm bảng và text box."""
+    """Đọc docx theo ngắt trang, gồm bảng và text box."""
     from docx import Document
     from docx.oxml.ns import qn
     from docx.table import Table
@@ -180,7 +180,7 @@ def read_docx(path: str | Path) -> list[str]:
     return [convert_tcvn3(p, assume=assume) for p in pages]
 
 
-# doc, odt, rtf: dùng công cụ ngoài
+# doc, odt, rtf
 
 
 def _soffice_text(path: Path) -> str:
@@ -194,7 +194,7 @@ def _soffice_text(path: Path) -> str:
 
 
 def read_with_tools(path: str | Path) -> str:
-    """.doc dùng antiword/catdoc, còn lại (và khi lỗi) dùng LibreOffice."""
+    """.doc dùng antiword/catdoc, còn lại dùng LibreOffice."""
     path = Path(path)
     if path.suffix.lower() == ".doc":
         for cmd in (["antiword", "-m", "UTF-8.txt", str(path)], ["catdoc", "-w", "-d", "utf-8", str(path)]):
@@ -215,7 +215,7 @@ def read_with_tools(path: str | Path) -> str:
 
 
 def decode_text(data: bytes) -> str:
-    """Thử UTF-8 (có/không BOM), UTF-16, rồi cp1258."""
+    """Thử UTF-8, UTF-16, rồi cp1258."""
     if data.startswith((b"\xff\xfe", b"\xfe\xff")):
         return data.decode("utf-16", errors="replace")
     for enc in ("utf-8-sig", "cp1258"):
@@ -230,13 +230,13 @@ def decode_text(data: bytes) -> str:
 
 
 def clean(text: str) -> str:
-    """Bỏ khoảng trắng đầu/cuối dòng và dòng trống liên tiếp."""
+    """Bỏ khoảng trắng và dòng trống thừa."""
     text = re.sub(r"[ \t\xa0]+", " ", unicodedata.normalize("NFC", text))
     return re.sub(r"\n{3,}", "\n\n", "\n".join(line.strip() for line in text.split("\n"))).strip()
 
 
 def read_text_file(path: str | Path, page_chars: int = 3000) -> tuple[list[str], str]:
-    """Trả (các trang, lý do không dùng được). Lý do rỗng là dùng được."""
+    """Trả (các trang, lý do không dùng được)."""
     path = Path(path)
     ext = path.suffix.lower()
     try:
@@ -250,7 +250,7 @@ def read_text_file(path: str | Path, page_chars: int = 3000) -> tuple[list[str],
                 if not text.strip():
                     return [], "không đọc được (cần antiword, catdoc hoặc LibreOffice trên server)"
             text = unicodedata.normalize("NFC", convert_tcvn3(text.replace("\r\n", "\n").replace("\r", "\n")))
-            # Ký tự \f là ngắt trang của antiword/LibreOffice
+            # \f là ngắt trang
             pages = [p.strip() for p in text.split("\f")]
         pages = [clean(p) for p in pages if p.strip()]
     except Exception as exc:

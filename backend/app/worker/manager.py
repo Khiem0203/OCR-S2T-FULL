@@ -12,7 +12,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Gốc dự án
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 STATE_DIR = os.path.join(BASE_DIR, "worker_state")
 
@@ -36,7 +36,7 @@ def _ensure_dirs() -> None:
 
 try:
     _ensure_dirs()
-except OSError as exc:  # Không tạo được thư mục; báo lại khi bật worker
+except OSError as exc:  # Báo lại khi bật worker
     logger.warning("cannot create log/state directories under %s: %s", BASE_DIR, exc)
 
 FLOWER_URL = os.getenv("FLOWER_URL", "http://localhost:5555")

@@ -38,7 +38,8 @@ FRONTEND_PORT=3000 BACKEND_URL=http://10.0.0.5:9090 VENV_BIN=../backend/.venv/bi
 | `FRONTEND_PORT` | `8080` | Cổng tùy ý |
 | `BACKEND_URL` | `http://127.0.0.1:9090` | Địa chỉ API backend (`API_PORT` của backend) |
 
-Chạy nền bằng systemd: sửa đường dẫn trong `frontend.service` rồi
+Chạy nền bằng systemd: `frontend.service` ghi cố định cổng 8080, nghe `0.0.0.0`, backend `http://127.0.0.1:9090`,
+venv `/opt/ocr-fullpage/backend/.venv` (không đọc `.env`; muốn đổi thì sửa thẳng trong file), rồi
 `sudo cp frontend.service /etc/systemd/system/ && sudo systemctl enable --now frontend`.
 Nhớ mở cổng trên tường lửa nếu cần, ví dụ `sudo ufw allow 8080/tcp`.
 

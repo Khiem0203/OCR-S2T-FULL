@@ -1,4 +1,4 @@
-"""File người dùng tải lên: lưu vào thư mục riêng, đọc lại như S3."""
+"""File tải lên từ máy, đọc lại như S3."""
 import os
 import re
 import shutil
@@ -16,7 +16,7 @@ def is_upload(path: str) -> bool:
 
 
 def safe_name(name: str) -> str:
-    """Bỏ phần thư mục (tải cả folder) và ký tự lạ; giữ tên để sắp trang theo tên."""
+    """Bỏ phần thư mục và ký tự lạ."""
     base = os.path.basename((name or "").replace("\\", "/")).strip()
     base = re.sub(r"[\x00-\x1f/]", "", base).lstrip(".")
     return base[:200] or "file"
@@ -30,7 +30,7 @@ def new_upload(root: str | Path) -> tuple[str, Path]:
 
 
 def save_file(src, folder: Path, name: str, max_bytes: int) -> str:
-    """Chép stream vào folder, tên trùng thì thêm số; trả tên đã lưu."""
+    """Lưu file, tên trùng thì thêm số; trả tên đã lưu."""
     name = safe_name(name)
     stem, ext = os.path.splitext(name)
     target, n = folder / name, 1
@@ -53,7 +53,7 @@ def save_file(src, folder: Path, name: str, max_bytes: int) -> str:
 
 
 class LocalStorage:
-    """Cùng giao diện với S3Storage; đường dẫn dạng upload://<id>/ hoặc upload://<id>/<tên file>."""
+    """Giống S3Storage; đường dẫn upload://<id>/[tên file]."""
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -77,7 +77,7 @@ class LocalStorage:
         return upload_id, [name] + [n for n in names if n != name and os.path.splitext(n)[0].lower() == stem], name
 
     def download(self, upload_id: str, name: str, dest_dir: str | Path, max_bytes: int) -> Path:
-        """Chuyển file vào thư mục xử lý (không chép lại)."""
+        """Chuyển file vào thư mục xử lý."""
         src = self.root / upload_id / safe_name(name)
         if src.stat().st_size > max_bytes:
             raise FileTooLarge(f"{name} is larger than {max_bytes // (1024 * 1024)} MB")

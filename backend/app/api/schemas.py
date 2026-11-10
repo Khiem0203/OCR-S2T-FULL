@@ -13,7 +13,7 @@ def _http_url(value: str) -> str:
 
 
 class FullPageRequest(BaseModel):
-    # Một file (kèm file cùng tên khác đuôi) hoặc cả thư mục (kết thúc bằng /)
+    # Một file hoặc thư mục (kết thúc bằng /)
     s3_path: str = Field(..., description="s3://bucket/path/file.pdf or s3://bucket/folder/ (PDF, image, docx, doc, odt, rtf, txt, md)")
     # Không gửi thì dùng S3_* trong .env
     access_key: Optional[SecretStr] = Field(default=None, description="S3 access key (default: S3_ACCESS_KEY)")

@@ -1,4 +1,4 @@
-// Giao diện tải file lên, theo dõi việc và xem kết quả OCR / chép lời
+// Tải file lên, theo dõi việc, xem kết quả
 "use strict";
 
 const MODES = {
@@ -22,12 +22,12 @@ let mode = "ocr";
 let selected = []; // {file, path}
 let skipped = [];
 let jobs = load("jobs", []);
-const localFiles = new Map(); // request_id -> File[] (chỉ trong phiên này, để phát lại âm thanh)
+const localFiles = new Map(); // request_id -> File[] để phát lại
 const results = new Map(); // request_id -> kết quả
 let current = null; // việc đang xem
 let view = "text";
 
-// Lưu trữ trên trình duyệt (có thể bị chặn)
+// localStorage (có thể bị chặn)
 function load(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
 }
@@ -100,7 +100,7 @@ function addFiles(items, fromFolder, reset = false) {
       selected.push({ file, path });
     }
   }
-  // Chọn thư mục thì mặc định gộp thành một tài liệu
+  // Chọn thư mục thì mặc định gộp
   if (fromFolder) $("optGroup").checked = true;
   else if (reset || selected.length === items.length) $("optGroup").checked = false;
   renderSelection();
@@ -289,7 +289,7 @@ async function openJob(job) {
   $("vNotice").textContent = res.notice || "";
   $("vChangeCount").textContent = res.changes.length;
   $("vUnknownCount").textContent = res.unknown_total;
-  // Phát lại âm thanh nếu file còn trong phiên này
+  // Phát lại nếu file còn trong phiên
   const files = localFiles.get(job.id) || [];
   if (speech && files.length) {
     $("vAudio").hidden = false;

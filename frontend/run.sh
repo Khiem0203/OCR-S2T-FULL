@@ -1,12 +1,10 @@
 #!/bin/bash
-# Chạy frontend: trang web + chuyển tiếp /api sang backend.
-# FRONTEND_HOST (mặc định 0.0.0.0), FRONTEND_PORT (mặc định 8080), BACKEND_URL (mặc định http://127.0.0.1:9090)
+# Chạy frontend; cấu hình trong .env.
 
 set -u
 FRONTEND_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$FRONTEND_DIR" || exit 1
 
-# Đọc FRONTEND_* trong .env của frontend nếu có
 if [ -f .env ]; then
     set -a
     # shellcheck disable=SC1091

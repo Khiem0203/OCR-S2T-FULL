@@ -1,4 +1,4 @@
-"""Luồng OCR toàn trang: render, OCR, sửa chính tả, báo từ lạ."""
+"""Luồng OCR toàn trang."""
 import asyncio
 import base64
 import logging
@@ -73,11 +73,7 @@ def pdf_text_page(number: int, text: str) -> dict:
 
 
 def check_pdf_text(source: PageSource, settings: Settings) -> tuple[list[str], list[bool], str]:
-    """Đọc lớp text của PDF; trả (text từng trang, trang nào dùng text, lý do bỏ cả file).
-
-    Một trang lỗi Unicode là bỏ text cả file, OCR hết (tránh PDF scan 2 lớp kém).
-    Trang trống hoặc quá ít chữ thì chỉ OCR trang đó.
-    """
+    """Trả (text từng trang, trang nào dùng text, lý do bỏ cả file); trang ít chữ thì OCR."""
     texts = [source.embedded_text(i) for i in range(source.count)]
     if not source.is_pdf:
         return texts, [False] * len(texts), ""
@@ -104,10 +100,7 @@ def pdf_report(name: str, used: list[bool], problem: str, settings: Settings) ->
 
 
 def prepare_pages(source: PageSource, out_dir: Path, settings: Settings, start: int = 0) -> tuple[list[str], list[str], dict]:
-    """Lưu text trang PDF dùng được; trang còn lại render, chỉnh nghiêng, lưu JPEG để OCR.
-
-    Trang dùng text có ảnh rỗng. start là số trang đã có trước. Trả thêm báo cáo lớp text.
-    """
+    """Lưu text trang dùng được, render trang còn lại; trang dùng text có ảnh rỗng."""
     out_dir.mkdir(parents=True, exist_ok=True)
     texts, used, problem = check_pdf_text(source, settings)
     images, text_paths = [], []
@@ -115,7 +108,7 @@ def prepare_pages(source: PageSource, out_dir: Path, settings: Settings, start: 
         stem = out_dir / f"page_{start + i + 1:04d}"
         images.append("")
         text_paths.append("")
-        # Lớp text lỗi thì không giữ làm dự phòng
+        # Lớp text lỗi thì không làm dự phòng
         if texts[i] and not problem:
             stem.with_suffix(".txt").write_text(texts[i], encoding="utf-8")
             text_paths[-1] = str(stem.with_suffix(".txt"))
@@ -167,7 +160,7 @@ async def ocr_files(image_paths: list[str], text_paths: list[str], settings: Set
 # Bước 3: hậu xử lý
 
 
-# Text gõ máy (file văn bản, lớp text PDF): mặc định không sửa chính tả
+# Text gõ máy: mặc định không sửa chính tả
 TYPED_SOURCES = ("text_file", "pdf_text")
 
 
@@ -198,7 +191,7 @@ def finalize(pages: list[dict], settings: Settings, elapsed_ms: int, include_raw
     out_pages, changes = [], []
     for p in pages:
         q = dict(p)
-        # Gom các dòng bị sửa của mọi trang vào một danh sách
+        # Gom các dòng bị sửa
         changes.extend({"page": p["page"], **c} for c in q.pop("changes", []))
         if not include_raw:
             q.pop("raw_text", None)
@@ -232,7 +225,7 @@ async def process_document(
     started = time.perf_counter()
     name = Path(filename).name or "document"
     if kind(name) == "text":
-        # File văn bản: lấy text luôn, không OCR
+        # File văn bản: không OCR
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / name
             await asyncio.to_thread(path.write_bytes, data)

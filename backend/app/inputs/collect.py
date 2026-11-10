@@ -1,4 +1,4 @@
-"""Lấy đầu vào từ S3: đọc file văn bản trước, không dùng được mới chuẩn bị OCR."""
+"""Lấy đầu vào: thử file văn bản trước, không được mới OCR."""
 import logging
 import posixpath
 from pathlib import Path
@@ -16,7 +16,7 @@ def text_page(number: int, text: str) -> dict:
 
 
 def read_texts(fetch, keys: list[str], settings: Settings, info: dict) -> list[str] | None:
-    """Tải và thử lần lượt từng file văn bản; trả các trang của file đầu tiên dùng được."""
+    """Trả các trang của file văn bản đầu tiên dùng được."""
     for key in keys:
         path = fetch(key)
         pages, problem = read_text_file(path, settings.text_page_chars)
@@ -32,10 +32,7 @@ def read_texts(fetch, keys: list[str], settings: Settings, info: dict) -> list[s
 
 
 def collect(storage, s3_path: str, folder: Path, settings: Settings, prepare) -> dict:
-    """Trả {"input": ..., "pages": [...]} khi có text, hoặc {"input": ..., "image_paths", "text_paths"} để OCR.
-
-    prepare(source, out_dir, settings, start) trả (ảnh, text PDF, báo cáo lớp text); ảnh rỗng là trang dùng text.
-    """
+    """Trả pages khi có text, hoặc image_paths/text_paths để OCR (ảnh rỗng là trang dùng text)."""
     max_bytes = settings.max_upload_mb * 1024 * 1024
     bucket, keys, requested = storage.candidates(s3_path, settings.input_siblings)
     texts, ocr = plan(keys, requested)
@@ -43,7 +40,7 @@ def collect(storage, s3_path: str, folder: Path, settings: Settings, prepare) ->
         raise UnsupportedFile("no supported file (PDF, image, docx, doc, odt, rtf, txt, md)")
     info = {"mode": "", "files": [], "skipped": []}
 
-    # TEXT_FIRST=false thì chỉ đọc file văn bản khi không có gì để OCR
+    # TEXT_FIRST=false: chỉ đọc khi không có gì để OCR
     if texts and (settings.text_first or not ocr):
         pages = read_texts(lambda k: storage.download(bucket, k, folder / "text", max_bytes), texts, settings, info)
         if pages is not None:
@@ -51,7 +48,7 @@ def collect(storage, s3_path: str, folder: Path, settings: Settings, prepare) ->
             return {"input": info, "pages": [text_page(i + 1, t) for i, t in enumerate(pages)]}
 
     if not ocr:
-        # Không có gì để OCR: dùng tạm text kém chất lượng nếu có
+        # Không có gì để OCR: dùng tạm text kém
         name, pages = info.pop("fallback", (None, None))
         if pages is None:
             raise ValueError("text files could not be read and there is no PDF or image to OCR")
@@ -84,10 +81,7 @@ def collect(storage, s3_path: str, folder: Path, settings: Settings, prepare) ->
 
 
 def collect_audio(storage, s3_path: str, folder: Path, settings: Settings, prepare) -> dict:
-    """Tải file âm thanh (một file hoặc cả thư mục, theo tên) và giải mã từng file.
-
-    prepare(src, out_dir, settings, index, used_seconds) trả thông tin file và các đoạn.
-    """
+    """Tải và giải mã từng file âm thanh, theo thứ tự tên."""
     bucket, keys, _ = storage.candidates(s3_path, siblings=False)
     keys = sorted((k for k in keys if kind(k) == "audio"), key=natural_key)
     if not keys:

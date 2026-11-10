@@ -1,4 +1,4 @@
-"""Chuỗi Celery speech-to-text: tải + giải mã, PhoWhisper, chính tả, lưu DB + webhook."""
+"""Chuỗi Celery trích xuất lời nói."""
 import asyncio
 import time
 from datetime import datetime, timezone
