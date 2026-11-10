@@ -3,7 +3,7 @@
 | Thư mục | Nội dung |
 |---|---|
 | [`backend/`](backend/README.md) | API FastAPI + worker Celery: OCR (Chandra), chép lời (PhoWhisper), sửa chính tả (ProtonX + từ điển), PostgreSQL, webhook |
-| [`frontend/`](frontend/README.md) | Trang web tải file lên từ máy (nhiều file hoặc cả thư mục), theo dõi việc, xem kết quả và chỗ đã sửa |
+| [`frontend/`](frontend/README.md) | Trang web tải file lên từ máy (nhiều file hoặc cả thư mục), theo dõi việc, xem kết quả và chỗ đã sửa (web mang mục đích demo) |
 
 ```
 Trình duyệt ──► frontend (0.0.0.0:8080) ──/api──► backend API (127.0.0.1:9090) ──► RabbitMQ ──► worker Celery
