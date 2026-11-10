@@ -2,6 +2,8 @@
 import posixpath
 import re
 
+from ..audio.decode import AUDIO_EXT
+
 # Thứ tự ưu tiên file văn bản
 TEXT_EXT = (".docx", ".doc", ".odt", ".rtf", ".txt", ".md")
 PDF_EXT = (".pdf",)
@@ -9,7 +11,7 @@ IMAGE_EXT = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp")
 
 
 def kind(name: str) -> str | None:
-    """text, pdf, image hoặc None nếu không hỗ trợ."""
+    """text, pdf, image, audio hoặc None nếu không hỗ trợ."""
     base = posixpath.basename(name)
     if not base or base.startswith(("~$", ".")):
         return None
@@ -20,6 +22,8 @@ def kind(name: str) -> str | None:
         return "pdf"
     if ext in IMAGE_EXT:
         return "image"
+    if ext in AUDIO_EXT:
+        return "audio"
     return None
 
 
