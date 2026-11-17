@@ -10,6 +10,7 @@ from ..inputs.select import kind
 from ..storage.files import remove_tree
 from ..storage.local import SCHEME, new_upload, safe_name, save_file
 from ..storage.s3 import FileTooLarge
+from ..worker.book_tasks import submit_book
 from ..worker.speech_tasks import submit_speech
 from ..worker.tasks import submit_fullpage
 
@@ -61,6 +62,14 @@ def build_router(settings: Settings) -> APIRouter:
     ):
         """OCR file tải lên; group=true thì cả lô là một tài liệu."""
         return await accept(files, OCR_KINDS, settings.max_upload_mb, group, spellcheck, submit_fullpage)
+
+    @router.post("/metadata", status_code=202)
+    async def upload_metadata(
+        files: list[UploadFile] = File(...),
+        group: bool = Form(True),
+    ):
+        """Metadata sách; group=true thì cả lô là một cuốn (PDF + Word cùng tên...)."""
+        return await accept(files, OCR_KINDS, settings.max_upload_mb, group, True, submit_book)
 
     @router.post("/speech", status_code=202)
     async def upload_speech(

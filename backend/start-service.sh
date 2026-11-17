@@ -20,7 +20,7 @@ UVICORN="${BIN}uvicorn"
 
 : "${API_PORT:=9090}"
 : "${PREPARE_WORKERS:=2}" "${OCR_WORKERS:=2}" "${SPELL_WORKERS:=2}" "${DB_WORKERS:=2}"
-: "${SPEECH_PREPARE_WORKERS:=1}" "${SPEECH_ASR_WORKERS:=1}" "${SPEECH_SPELL_WORKERS:=1}" "${SPEECH_DB_WORKERS:=1}"
+: "${BOOK_WORKERS:=1}" "${SPEECH_PREPARE_WORKERS:=1}" "${SPEECH_ASR_WORKERS:=1}" "${SPEECH_SPELL_WORKERS:=1}" "${SPEECH_DB_WORKERS:=1}"
 : "${START_CHANDRA:=false}" "${CHANDRA_CUDA_DEVICE:=0}" "${CHANDRA_PORT:=8101}" "${CHANDRA_MODEL:=datalab-to/chandra-ocr-2}"
 : "${CHANDRA_MAX_MODEL_LEN:=6000}" "${CHANDRA_GPU_MEMORY_UTILIZATION:=0.95}"
 : "${CHANDRA_MAX_NUM_BATCHED_TOKENS:=9216}" "${CHANDRA_MAX_NUM_SEQS:=20}" "${CHANDRA_PREFIX_CACHING:=true}"
@@ -44,7 +44,7 @@ command -v "$UVICORN" >/dev/null 2>&1 || fail "uvicorn not found; set VENV_BIN"
 
 LOG_DIR="$PROJECT_DIR/logs"
 RUN_DIR="$PROJECT_DIR/run"
-mkdir -p "$LOG_DIR/api" "$LOG_DIR/prepare" "$LOG_DIR/ocr" "$LOG_DIR/spell" "$LOG_DIR/db" "$LOG_DIR/speech" \
+mkdir -p "$LOG_DIR/api" "$LOG_DIR/prepare" "$LOG_DIR/ocr" "$LOG_DIR/spell" "$LOG_DIR/db" "$LOG_DIR/speech" "$LOG_DIR/book" \
          "$PROJECT_DIR/temp_processing" "$RUN_DIR" \
     || fail "cannot create $LOG_DIR, temp_processing or $RUN_DIR; check that $(whoami) owns $PROJECT_DIR"
 [ -w "$LOG_DIR" ] && [ -w "$PROJECT_DIR/temp_processing" ] \
@@ -83,6 +83,7 @@ start_workers speech_prepare_queue   speech  "$SPEECH_PREPARE_WORKERS" 1
 start_workers speech_asr_queue       speech  "$SPEECH_ASR_WORKERS"     1
 start_workers speech_spell_queue     speech  "$SPEECH_SPELL_WORKERS"   1
 start_workers speech_db_queue        speech  "$SPEECH_DB_WORKERS"      2
+start_workers book_queue             book    "$BOOK_WORKERS"           2
 
 if [ "$START_CHANDRA" = "true" ]; then
     command -v "${BIN}vllm" >/dev/null 2>&1 || fail "START_CHANDRA=true but vllm not found; set VENV_BIN"

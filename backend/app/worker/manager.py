@@ -25,6 +25,7 @@ QUEUE_LOG_SUBDIR = {
     "speech_asr_queue":       "speech",
     "speech_spell_queue":     "speech",
     "speech_db_queue":        "speech",
+    "book_queue":             "book",
 }
 
 
@@ -55,6 +56,7 @@ WORKER_PRESETS = {
     "speech_asr_queue":       {"num_workers": 1, "concurrency": 1, "description": "PhoWhisper speech-to-text (GPU-bound)"},
     "speech_spell_queue":     {"num_workers": 1, "concurrency": 1, "description": "Dictionary + ProtonX spelling check (GPU-bound)"},
     "speech_db_queue":        {"num_workers": 1, "concurrency": 2, "description": "Save transcript + webhook (I/O-bound)"},
+    "book_queue":             {"num_workers": 1, "concurrency": 2, "description": "Book metadata from the last pages (Chandra)"},
 }
 
 

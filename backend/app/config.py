@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parent.parent
 QUEUES = (
     "fullpage_prepare_queue", "fullpage_ocr_queue", "fullpage_spell_queue", "fullpage_db_queue",
     "speech_prepare_queue", "speech_asr_queue", "speech_spell_queue", "speech_db_queue",
+    "book_queue",
 )
 
 
@@ -97,6 +98,9 @@ class Settings:
     # Lấy text PDF; lỗi Unicode thì OCR cả file
     pdf_text_first: bool = True
     pdf_text_min_known: float = 0.9
+    # Metadata sách: số trang cuối xét, số trường tối thiểu khi không thấy dòng Chịu trách nhiệm
+    book_last_pages: int = 3
+    book_min_fields: int = 3
 
     spell_mode: str = "both"  # off | dict | both
     spell_review: str = "suspects"  # suspects | all
@@ -199,6 +203,8 @@ def load_settings() -> Settings:
         spell_text_files=_bool("SPELL_TEXT_FILES", d.spell_text_files),
         pdf_text_first=_bool("PDF_TEXT_FIRST", d.pdf_text_first),
         pdf_text_min_known=_float("PDF_TEXT_MIN_KNOWN", d.pdf_text_min_known),
+        book_last_pages=max(1, _int("BOOK_LAST_PAGES", d.book_last_pages)),
+        book_min_fields=max(1, _int("BOOK_MIN_FIELDS", d.book_min_fields)),
         spell_mode=mode,
         spell_review=review,
         spell_batch_chars=_int("SPELL_BATCH_CHARS", d.spell_batch_chars),

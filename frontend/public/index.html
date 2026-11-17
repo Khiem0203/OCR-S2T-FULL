@@ -28,6 +28,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" data-mode="ocr" role="tab">OCR tài liệu</button>
       <button class="tab" data-mode="speech" role="tab">Trích xuất lời nói</button>
+      <button class="tab" data-mode="metadata" role="tab">Metadata sách</button>
     </nav>
 
     <section class="card">
@@ -49,7 +50,7 @@
         <p id="selSkipped" class="warn" hidden></p>
         <div class="options">
           <label><input id="optGroup" type="checkbox"> <span id="groupLabel"></span></label>
-          <label><input id="optSpell" type="checkbox" checked> Sửa chính tả (ProtonX + từ điển)</label>
+          <label id="spellRow"><input id="optSpell" type="checkbox" checked> Sửa chính tả (ProtonX + từ điển)</label>
         </div>
         <div class="submit-row">
           <button id="submit" class="btn primary">Tải lên &amp; xử lý</button>
@@ -82,6 +83,7 @@
       <p id="vNotice" class="notice" hidden></p>
       <audio id="vAudio" controls hidden></audio>
       <nav class="tabs small" id="vTabs">
+        <button class="tab" data-view="fields">Thông tin</button>
         <button class="tab active" data-view="text">Văn bản</button>
         <button class="tab" data-view="changes">Chỗ đã sửa <span id="vChangeCount" class="pill"></span></button>
         <button class="tab" data-view="unknown">Từ lạ <span id="vUnknownCount" class="pill"></span></button>

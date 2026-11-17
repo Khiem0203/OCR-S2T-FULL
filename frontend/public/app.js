@@ -14,7 +14,22 @@ const MODES = {
     hint: "mp3, m4a, wav, flac, ogg, opus, aac, wma... và video mp4, webm, mkv, mov (lấy tiếng)",
     group: "Gộp thành một bản chép lời (nối các file theo tên)",
   },
+  metadata: {
+    ext: ["pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp", "docx", "doc", "odt", "rtf", "txt", "md"],
+    endpoint: "/api/uploads/metadata",
+    hint: "PDF sách (kèm Word nếu có) hoặc ảnh các trang; lấy thông tin xuất bản ở trang cuối",
+    group: "Gộp thành một cuốn sách (PDF, Word, ảnh của cùng một cuốn)",
+  },
 };
+const KIND = { ocr: "OCR", speech: "Lời nói", metadata: "Metadata sách" };
+const FIELD_LABELS = {
+  nha_xuat_ban: "Nhà xuất bản", isbn: "ISBN", luu_chieu: "Lưu chiểu", luu_chieu_thang: "Tháng lưu chiểu",
+  luu_chieu_nam: "Năm lưu chiểu", giam_doc_tong_bien_tap: "Giám đốc - Tổng biên tập", ban_bien_tap: "Biên tập",
+  che_ban: "Chế bản", trinh_bay_bia: "Trình bày bìa", dia_chi_nxb: "Địa chỉ NXB", dien_thoai_nxb: "Điện thoại NXB",
+  sdt_quan_ly_xuat_ban: "ĐT quản lý xuất bản", sdt_tong_bien_tap: "ĐT tổng biên tập", fax_nxb: "Fax NXB",
+  dia_chi_co_so_in: "Địa chỉ cơ sở in", ngay_xac_nhan_dkxb: "Ngày xác nhận ĐKXB",
+};
+const SOURCES = { text_file: "file văn bản", pdf_text: "text PDF", ocr: "OCR" };
 const POLL_MS = 3000;
 const $ = (id) => document.getElementById(id);
 
@@ -88,6 +103,7 @@ function setMode(m) {
   $("groupLabel").textContent = MODES[m].group;
   const accept = MODES[m].ext.map((e) => "." + e).join(",");
   $("pickFiles").accept = accept;
+  $("spellRow").hidden = m === "metadata";
   addFiles([], false, true);
 }
 
@@ -101,7 +117,7 @@ function addFiles(items, fromFolder, reset = false) {
     }
   }
   // Chọn thư mục thì mặc định gộp
-  if (fromFolder) $("optGroup").checked = true;
+  if (fromFolder || mode === "metadata") $("optGroup").checked = true;
   else if (reset || selected.length === items.length) $("optGroup").checked = false;
   renderSelection();
 }
@@ -225,7 +241,7 @@ function renderJobs() {
   $("jobs").replaceChildren(...jobs.map((j) => {
     const [text, cls] = STATUS[j.status] || [j.status, "wait"];
     const mins = Math.round((Date.now() - j.created) / 60000);
-    const meta = `${j.kind === "ocr" ? "OCR" : "Chép lời"} · ${new Date(j.created).toLocaleString("vi-VN")}`
+    const meta = `${KIND[j.kind] || j.kind} · ${new Date(j.created).toLocaleString("vi-VN")}`
       + (j.status === "FAILURE" && j.error ? ` · ${j.error}` : "")
       + (cls === "wait" ? ` · ${mins} phút` : "");
     return el("li", { class: "job", onclick: () => openJob(j) },
@@ -281,6 +297,22 @@ async function openJob(job) {
     return;
   }
   delete $("vBody").dataset.waiting;
+  const book = job.kind === "metadata";
+  document.querySelectorAll("#vTabs .tab").forEach((t) => {
+    t.hidden = book ? ["changes", "unknown"].includes(t.dataset.view) : t.dataset.view === "fields";
+  });
+  if (book) {
+    view = "fields";
+    $("vMeta").textContent = [`${res.field_count} trường`, SOURCES[res.source] || "không tìm thấy",
+      res.page ? `trang ${res.page}${res.page_count ? "/" + res.page_count : ""}` : "", res.file,
+      `${(res.elapsed_ms / 1000).toFixed(1)} giây xử lý`].filter(Boolean).join(" · ");
+    $("vNotice").hidden = !res.error;
+    $("vNotice").textContent = res.error || "";
+    render();
+    $("viewer").scrollIntoView({ behavior: "smooth" });
+    return;
+  }
+  if (view === "fields") view = "text";
   const speech = job.kind === "speech";
   $("vMeta").textContent = speech
     ? `${clock(res.duration)} · ${res.segment_count} đoạn · ${res.correction_total} chỗ sửa · ${(res.elapsed_ms / 1000).toFixed(1)} giây xử lý`
@@ -303,11 +335,13 @@ function render() {
   document.querySelectorAll("#vTabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.view === view));
   const res = results.get(current.id);
   const speech = current.kind === "speech";
+  const book = current.kind === "metadata";
   const body = {
-    text: () => speech ? speechText(res) : ocrText(res),
+    fields: () => fieldsView(res),
+    text: () => book ? el("pre", { class: "plain" }, res.text || "(không có)") : speech ? speechText(res) : ocrText(res),
     changes: () => changesView(res, speech),
     unknown: () => unknownView(res, speech),
-    input: () => inputView(res, speech),
+    input: () => book ? bookInputView(res) : inputView(res, speech),
   }[view]();
   $("vBody").replaceChildren(body);
 }
@@ -319,7 +353,9 @@ $("vDownload").addEventListener("click", () => {
   if (!res) return;
   const text = current.kind === "speech"
     ? res.segments.map((s) => `[${clock(s.start)}] ${s.text}`).join("\n")
-    : res.text;
+    : current.kind === "metadata"
+      ? Object.entries(FIELD_LABELS).map(([k, label]) => `${label}: ${res.thong_tin[k] ?? ""}`).join("\n")
+      : res.text;
   const a = el("a", { href: URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" })),
     download: current.files[0].replace(/\.[^.]+$/, "") + ".txt" });
   a.click();
@@ -399,6 +435,22 @@ function inputView(res, speech) {
   (info.pdf_text || []).forEach((p) => rows.push([`Text PDF: ${p.file}`,
     `${p.text_pages} trang lấy text, ${p.ocr_pages} trang OCR${p.reason ? " · " + p.reason : ""}`]));
   if (info.warning) rows.push(["Cảnh báo", info.warning]);
+  return el("table", {}, el("tbody", {}, rows.map(([k, v]) => el("tr", {}, el("th", {}, k), el("td", {}, v)))));
+}
+
+function fieldsView(res) {
+  return el("table", {}, el("tbody", {}, Object.entries(FIELD_LABELS).map(([k, label]) => {
+    const v = res.thong_tin[k];
+    return el("tr", {}, el("th", {}, label), el("td", {}, v == null || v === "" ? el("span", { class: "muted" }, "—") : v));
+  })));
+}
+
+function bookInputView(res) {
+  const info = res.input || {};
+  const rows = [["Nguồn", SOURCES[res.source] || "không tìm thấy"], ["File dùng", res.file || "—"]];
+  if (res.page) rows.push(["Trang", `${res.page}${res.page_count ? " / " + res.page_count : ""}`]);
+  (info.skipped || []).forEach((s) => rows.push([`Bỏ qua: ${s.file}`, s.reason]));
+  if (info.pdf_text) rows.push(["Không dùng text PDF", info.pdf_text]);
   return el("table", {}, el("tbody", {}, rows.map(([k, v]) => el("tr", {}, el("th", {}, k), el("td", {}, v)))));
 }
 

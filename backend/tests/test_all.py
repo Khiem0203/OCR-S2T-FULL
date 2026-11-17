@@ -1294,6 +1294,165 @@ class Uploads(unittest.TestCase):
                 storage.candidates(bad)
 
 
+INFO_PAGE = """NHÀ XUẤT BẢN CHÍNH TRỊ QUỐC GIA SỰ THẬT
+Địa chỉ: Số 6/86 Duy Tân, Cầu Giấy, Hà Nội
+ĐT: 080.49221, Fax: 080.49222
+Chịu trách nhiệm xuất bản
+GIÁM ĐỐC - TỔNG BIÊN TẬP
+PGS.TS. PHẠM MINH TUẤN
+Biên tập nội dung: ThS. CÙ THỊ THÚY LAN
+NGUYỄN THU HƯỜNG
+Trình bày bìa: VƯƠNG THANH TÚ
+Chế bản vi tính: VƯƠNG THANH TÚ
+Số đăng ký kế hoạch xuất bản: 470-2021/CXBIPH/2-14/CTQG.
+Số xác nhận đăng ký xuất bản ngày 05/3/2021.
+Mã số ISBN: 978-604-57-6547-0
+In 1.000 cuốn, khổ 14,5x20,5 cm, tại Công ty TNHH In Thanh Bình
+Địa chỉ: Số 18 ngách 68/53/9 - P. Quan Hoa - Q. Cầu Giấy - Hà Nội
+In xong và nộp lưu chiểu tháng 3 năm 2021."""
+# Font PDF chuẩn không có chữ Việt: bản không dấu
+INFO_ASCII = "\n".join(__import__("app.book.fields", fromlist=["plain"]).plain(line) for line in INFO_PAGE.split("\n"))
+
+
+class BookFields(unittest.TestCase):
+    """Tách thông tin xuất bản ở trang cuối."""
+
+    def test_publication_block(self):
+        from app.book.fields import count, extract
+
+        f = extract(INFO_PAGE)
+        self.assertEqual(f["nha_xuat_ban"], "NHÀ XUẤT BẢN CHÍNH TRỊ QUỐC GIA SỰ THẬT")
+        self.assertEqual(f["isbn"], "978-604-57-6547-0")
+        self.assertEqual((f["luu_chieu_thang"], f["luu_chieu_nam"]), (3, 2021))
+        self.assertEqual(f["giam_doc_tong_bien_tap"], "PGS.TS. PHẠM MINH TUẤN")
+        self.assertEqual(f["ban_bien_tap"], "ThS. CÙ THỊ THÚY LAN; NGUYỄN THU HƯỜNG")
+        self.assertEqual((f["trinh_bay_bia"], f["che_ban"]), ("VƯƠNG THANH TÚ", "VƯƠNG THANH TÚ"))
+        self.assertEqual(f["dia_chi_nxb"], "Số 6/86 Duy Tân, Cầu Giấy, Hà Nội")
+        self.assertEqual(f["dia_chi_co_so_in"], "Số 18 ngách 68/53/9 - P. Quan Hoa - Q. Cầu Giấy - Hà Nội")
+        self.assertEqual((f["dien_thoai_nxb"], f["fax_nxb"]), ("080.49221", "080.49222"))
+        self.assertEqual(f["ngay_xac_nhan_dkxb"], "05/03/2021")
+        self.assertGreaterEqual(count(f), 10)
+
+    def test_deposit_date_variants(self):
+        from app.book.fields import extract
+
+        cases = {
+            "In xong và nộp lưu chiểu tháng 03/2021.": (3, 2021),
+            "In xong và nộp lưu chiểu T3/2021": (3, 2021),
+            "In xong và nộp lưu chiểu tháng ba năm 2021": (3, 2021),
+            "In xong và nộp lưu chiểu tháng 12-20": (12, 2020),
+            "In xong nop lou chieau thang 5 nam 2019": (5, 2019),
+            "In xong và nộp lưu chiểu\ntháng 7 năm 2022": (7, 2022),
+            "In xong và nộp lưu chiểu quý I năm 2021": (None, 2021),
+            "Quyết định xuất bản số 79-QĐ/NXBCTQG ngày 05/3/2021\nIn xong và nộp lưu chiểu năm 2021": (3, 2021),
+            "Giấy phép xuất bản ngày 05/3/2021": (None, None),
+        }
+        for text, expected in cases.items():
+            f = extract(text)
+            self.assertEqual((f["luu_chieu_thang"], f["luu_chieu_nam"]), expected, text)
+
+
+class BookMetadata(unittest.TestCase):
+    """Metadata sách từ file tải lên / S3 (giả)."""
+
+    def setUp(self):
+        celery_app.conf.task_always_eager = True
+        celery_app.conf.task_eager_propagates = True
+        for patch in (NO_FFMPEG, mock.patch.dict(os.environ, Pipeline.ENV)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def sync(self, files, mocks=None, **overrides):
+        mocks = mocks or Mocks()
+        with make_client(mocks, temp_dir=os.environ["TEMP_DIR"], **overrides) as client:
+            r = client.post("/api/book-metadata/sync", headers=KEY, files=[("files", f) for f in files])
+        return r, mocks
+
+    def test_word_last_page_is_used_without_ocr(self):
+        body_pages = [["Chương 1", "Nội dung sách"], ["Tài liệu tham khảo", "Nxb. Văn hóa, Hà Nội, 2002, tr.183"],
+                      INFO_PAGE.split("\n")]
+        r, mocks = self.sync([("sach.pdf", make_pdf()), ("sach.docx", make_docx(*body_pages))])
+        body = r.json()
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((body["source"], body["file"], body["page"]), ("text_file", "sach.docx", 3))
+        self.assertEqual(body["thong_tin"]["isbn"], "978-604-57-6547-0")
+        # Dòng tài liệu tham khảo ở trang khác không bị lấy làm nhà xuất bản
+        self.assertEqual(body["thong_tin"]["nha_xuat_ban"], "NHÀ XUẤT BẢN CHÍNH TRỊ QUỐC GIA SỰ THẬT")
+        self.assertEqual(mocks.chandra_requests, [])
+
+    def test_pdf_text_layer_is_used_when_clean(self):
+        # Bản không dấu không có trong từ điển: bỏ ngưỡng từ điển
+        r, mocks = self.sync([("sach.pdf", make_pdf_pages(GOOD, GOOD, INFO_ASCII))], pdf_text_min_known=0.0)
+        body = r.json()
+        self.assertEqual((body["source"], body["page"], body["page_count"]), ("pdf_text", 3, 3))
+        self.assertEqual((body["thong_tin"]["luu_chieu_thang"], body["thong_tin"]["luu_chieu_nam"]), (3, 2021))
+        self.assertEqual(mocks.chandra_requests, [])
+
+    def test_bad_text_layer_goes_to_ocr_from_the_last_page(self):
+        html = "".join(f"<p>{line}</p>" for line in INFO_PAGE.split("\n"))
+        r, mocks = self.sync([("sach.pdf", make_pdf_pages(TCVN3_LINE, GOOD, GOOD))], Mocks(html))
+        body = r.json()
+        self.assertEqual((body["source"], body["page"]), ("ocr", 3))
+        self.assertIn("TCVN3", body["input"]["pdf_text"])
+        self.assertEqual(body["thong_tin"]["isbn"], "978-604-57-6547-0")
+        # Trang cuối đã là trang thông tin: dừng, không OCR thêm
+        self.assertEqual(len(mocks.chandra_requests), 1)
+
+    def test_folder_of_images_reads_the_last_images(self):
+        html = "".join(f"<p>{line}</p>" for line in INFO_PAGE.split("\n"))
+        files = [(f"trang{n}.png", make_png()) for n in (1, 2, 10)]
+        r, mocks = self.sync(files, Mocks(html), book_last_pages=2)
+        body = r.json()
+        self.assertEqual((body["source"], body["file"], body["page"]), ("ocr", "trang10.png", 3))
+        self.assertEqual(len(mocks.chandra_requests), 1)
+
+    def test_nothing_found_is_not_an_error(self):
+        r, _ = self.sync([("ghi-chu.txt", "Việc thực hiện nghị quyết".encode())])
+        body = r.json()
+        self.assertEqual((r.status_code, body["field_count"], body["error"]), (200, 0, "không tìm thấy thông tin xuất bản"))
+        self.assertEqual(self.sync([("x.zip", b"PK")])[0].status_code, 415)
+
+    def test_upload_queue_and_s3_submit(self):
+        from app.worker import book_tasks
+
+        results = []
+
+        def run(*args):
+            r = book_tasks.submit_book(*args)
+            results.append(r.get())
+            return r
+
+        with mock.patch("app.api.uploads.submit_book", run), mock.patch.dict(os.environ, {"PDF_TEXT_MIN_KNOWN": "0"}), \
+             make_client(Mocks(), temp_dir=os.environ["TEMP_DIR"]) as client:
+            r = client.post("/api/uploads/metadata", headers=KEY,
+                            files=[("files", ("phan2.pdf", make_pdf_pages(GOOD, INFO_ASCII))), ("files", ("phan1.pdf", make_pdf()))])
+        self.assertEqual(len(r.json()["jobs"]), 1)
+        # PDF cuối theo tên chứa trang cuối sách
+        self.assertEqual((results[0]["source"], results[0]["file"]), ("pdf_text", "phan2.pdf"))
+        with make_client(Mocks()) as client, mock.patch("app.api.main.submit_book") as submit:
+            ok = client.post("/api/book-metadata", headers=KEY, json={"s3_path": "s3://b/sach/", "access_key": "A",
+                                                                   "secret_key": "S", "endpoint": "http://minio:9000"})
+        self.assertEqual(ok.status_code, 202)
+        self.assertEqual(submit.call_args.args[1], "s3://b/sach/")
+
+    def test_saved_and_listed(self):
+        conn = FakeConn()
+        result = {"thong_tin": {"isbn": "978"}, "field_count": 1, "source": "pdf_text", "file": "a.pdf", "page": 3,
+                  "text": "x", "error": "", "input": {}}
+        with mock.patch("psycopg2.connect", return_value=conn):
+            self.assertTrue(db.save_book(Settings(pg_host="h", pg_db="d", pg_user="u"), "rid", "s3://b/a.pdf", 1, result))
+        self.assertTrue(any(sql.startswith("INSERT INTO book_metadata") for sql, _ in conn.log))
+        row = ("rid-book-0001", "1", "s3://b/a.pdf", {"isbn": "978"}, 1, "pdf_text", "a.pdf", 3, "x", "", {},
+               DocumentsApi.CREATED)
+        answers = [("SELECT count(*)", [(1,)]), ("SELECT request_id", [row])]
+        with mock.patch("psycopg2.connect", return_value=ScriptedConn(answers)), \
+             make_client(Mocks(), pg_host="h", pg_db="d", pg_user="u") as c:
+            listing = c.get("/api/book-metadata", headers=KEY).json()
+            one = c.get("/api/book-metadata/rid-book-0001", headers=KEY).json()
+        self.assertEqual(listing["items"][0]["fields"], {"isbn": "978"})
+        self.assertEqual(one["page"], 3)
+
+
 class Config(unittest.TestCase):
     def test_refuses_to_start_without_api_keys(self):
         with self.assertRaises(RuntimeError):

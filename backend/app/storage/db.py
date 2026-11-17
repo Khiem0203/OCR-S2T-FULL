@@ -304,3 +304,93 @@ def get_transcript(settings: Settings, request_id: str) -> dict | None:
             return doc
     finally:
         conn.close()
+
+
+# Metadata sách
+
+_BOOK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS book_metadata (
+    id          SERIAL PRIMARY KEY,
+    request_id  TEXT UNIQUE NOT NULL,
+    document_id TEXT,
+    s3_path     TEXT,
+    fields      JSONB,
+    field_count INTEGER,
+    source      TEXT,
+    file        TEXT,
+    page        INTEGER,
+    text        TEXT,
+    error       TEXT,
+    input       JSONB,
+    created_at  TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS book_metadata_document_idx ON book_metadata (document_id);
+"""
+
+_BOOK_KEYS = ["request_id", "document_id", "s3_path", "fields", "field_count", "source", "file", "page", "text", "error",
+              "input", "created_at"]
+
+
+def save_book(settings: Settings, request_id: str, s3_path: str, document_id, result: dict) -> bool:
+    """Lưu metadata sách; False nếu chưa cấu hình DB."""
+    if not configured(settings):
+        return False
+    from psycopg2.extras import Json
+
+    conn = connect(settings)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(_BOOK_SCHEMA)
+            cur.execute(
+                """
+                INSERT INTO book_metadata (request_id, document_id, s3_path, fields, field_count, source, file, page, text, error, input)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (request_id) DO UPDATE SET
+                    document_id = EXCLUDED.document_id, s3_path = EXCLUDED.s3_path, fields = EXCLUDED.fields,
+                    field_count = EXCLUDED.field_count, source = EXCLUDED.source, file = EXCLUDED.file,
+                    page = EXCLUDED.page, text = EXCLUDED.text, error = EXCLUDED.error, input = EXCLUDED.input
+                """,
+                (
+                    request_id, None if document_id is None else str(document_id), s3_path, Json(result["thong_tin"]),
+                    result["field_count"], result["source"], result["file"], result["page"], result["text"],
+                    result["error"], Json(result["input"]),
+                ),
+            )
+    finally:
+        conn.close()
+    return True
+
+
+def _book(row) -> dict:
+    doc = dict(zip(_BOOK_KEYS, row))
+    if doc["created_at"] is not None:
+        doc["created_at"] = doc["created_at"].isoformat()
+    return doc
+
+
+def list_books(settings: Settings, limit: int, offset: int, document_id: str | None = None) -> tuple[list[dict], int]:
+    """Danh sách metadata sách mới nhất trước, kèm tổng số."""
+    where, params = ("WHERE document_id = %s", (document_id,)) if document_id else ("", ())
+    conn = connect(settings)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(_BOOK_SCHEMA)
+            cur.execute(f"SELECT count(*) FROM book_metadata {where}", params)
+            total = cur.fetchone()[0]
+            cur.execute(f"SELECT {', '.join(_BOOK_KEYS)} FROM book_metadata {where} ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
+                        params + (limit, offset))
+            return [_book(r) for r in cur.fetchall()], total
+    finally:
+        conn.close()
+
+
+def get_book(settings: Settings, request_id: str) -> dict | None:
+    conn = connect(settings)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(_BOOK_SCHEMA)
+            cur.execute(f"SELECT {', '.join(_BOOK_KEYS)} FROM book_metadata WHERE request_id = %s", (request_id,))
+            row = cur.fetchone()
+            return _book(row) if row else None
+    finally:
+        conn.close()

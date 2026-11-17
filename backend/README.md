@@ -19,6 +19,8 @@ POST /api/speech-to-text ──► RabbitMQ
    speech_asr_queue           ▼  PhoWhisper-large (vLLM) chép lời từng đoạn, gửi song song
    speech_spell_queue         ▼  ProtonX sửa, từ điển kiểm duyệt → sửa chính tả → báo từ lạ
    speech_db_queue            ▼  lưu PostgreSQL + gửi webhook + dọn file tạm
+
+POST /api/book-metadata ──► RabbitMQ ──► book_queue: trang cuối (Word / text PDF / Chandra) → regex → lưu DB + webhook
 ```
 
 ## Cấu trúc thư mục `app/`
@@ -30,12 +32,17 @@ app/
 │   ├── main.py          FastAPI app: xác thực, các endpoint      → uvicorn app.api.main:create_app --factory
 │   ├── documents.py     API cho web xem kết quả, trang, chỗ đã sửa
 │   ├── transcripts.py   API cho web xem bản chép lời, đoạn, chỗ đã sửa
+│   ├── books.py         metadata sách: chạy ngay, xem kết quả đã lưu
+│   ├── uploads.py       nhận file tải lên từ máy
 │   └── schemas.py       model request/response (pydantic)
 ├── worker/              Celery
 │   ├── celery_app.py    Celery app, hàng đợi, định tuyến          → celery -A app.worker.celery_app worker
 │   ├── tasks.py         4 tác vụ OCR: tải/render → OCR → chính tả → lưu DB + webhook
 │   ├── speech_tasks.py  4 tác vụ speech: tải/giải mã → PhoWhisper → chính tả → lưu DB + webhook
+│   ├── book_tasks.py    1 tác vụ metadata sách
 │   └── manager.py       bật/tắt worker qua Flower
+├── book/                metadata sách
+│   └── fields.py        regex tách thông tin xuất bản ở trang cuối
 ├── audio/               âm thanh
 │   └── decode.py        ffmpeg → PCM 16 kHz mono, cắt đoạn ở chỗ lặng, bỏ đoạn im lặng
 ├── inputs/              file đầu vào
@@ -46,6 +53,7 @@ app/
 ├── pipeline/            nghiệp vụ OCR toàn trang
 │   ├── fullpage.py      ghép các bước: OCR từng trang, sửa chính tả, báo từ lạ, kết quả cuối
 │   ├── speech.py        speech-to-text: chép lời từng đoạn, sửa chính tả, báo từ lạ, kết quả cuối
+│   ├── book.py          metadata sách: chọn nguồn text trang cuối, tách trường
 │   └── pages.py         đọc PDF/ảnh, render trang, chỉnh nghiêng, co ảnh
 ├── spell/               kiểm tra chính tả
 │   ├── lexicon.py       3 bộ từ điển, sinh ứng viên
@@ -76,7 +84,10 @@ Mọi endpoint `/api/*` cần khóa: `X-API-Key: <khóa>` hoặc `Authorization:
 | `POST /api/ocr-fullpage/sync` | Tải file lên trực tiếp, nhận kết quả ngay (không qua hàng đợi, không lưu DB, không webhook). |
 | `POST /api/speech-to-text` | Nộp việc trích xuất lời nói (file hoặc thư mục trên MinIO/S3). Trả `202` + `request_id`. Xem [Speech-to-text](#speech-to-text). |
 | `POST /api/speech-to-text/sync` | Tải file âm thanh lên, nhận bản chép lời ngay. |
-| `POST /api/uploads/ocr`, `POST /api/uploads/speech` | Tải **nhiều file / cả thư mục** từ máy lên rồi xếp hàng như S3. Xem [Tải file lên từ máy](#tải-file-lên-từ-máy). |
+| `POST /api/book-metadata` | Nộp việc lấy metadata sách (file hoặc thư mục trên S3). Xem [Metadata sách](#metadata-sách). |
+| `POST /api/book-metadata/sync` | Tải các file của một cuốn sách lên, nhận metadata ngay. |
+| `GET /api/book-metadata`, `/{id}` | Metadata sách đã lưu. |
+| `POST /api/uploads/ocr`, `POST /api/uploads/speech`, `POST /api/uploads/metadata` | Tải **nhiều file / cả thư mục** từ máy lên rồi xếp hàng như S3. Xem [Tải file lên từ máy](#tải-file-lên-từ-máy). |
 | `GET /api/transcripts`, `/{id}`, `/{id}/segments`, `/{id}/changes` | Bản chép lời đã lưu (cho web). |
 | `POST /api/spellcheck` | Chỉ kiểm tra chính tả một đoạn text, kèm báo cáo từ lạ. |
 | `GET /api/request-status/{id}` | Trạng thái; khi `SUCCESS` trả luôn kết quả. |
@@ -312,6 +323,57 @@ API cho web (cần PostgreSQL; bảng `speech_transcripts`, mỗi từ đã sử
 | `GET /api/transcripts/{id}/segments?file&changed&limit&offset` | Các đoạn theo thời gian; đoạn bị sửa có `before`, `segments` (tô màu), `fixes` |
 | `GET /api/transcripts/{id}/changes?file&by&limit&offset` | Các đoạn đã sửa, lọc theo file hoặc cách sửa |
 
+## Metadata sách
+
+Lấy **thông tin xuất bản ở trang cuối** sách (theo luồng `flow_sort_metadata` của `OCR_SORT_NXB`). Không dùng AI để
+tách trường: regex trên text trang cuối. Đầu vào giống OCR: một file (kèm file cùng tên khác đuôi), cả thư mục S3,
+hoặc tải lên (`/api/uploads/metadata`, mặc định gộp cả lô thành một cuốn; `/api/book-metadata/sync`).
+
+Lấy text trang cuối theo thứ tự, dừng ở nguồn đầu tiên dùng được:
+
+1. **File văn bản** (docx, doc, txt...): `BOOK_LAST_PAGES` trang cuối. Dùng khi có dòng *Chịu trách nhiệm xuất bản* /
+   *In xong* / *nộp lưu chiểu*, hoặc tách được ít nhất `BOOK_MIN_FIELDS` trường.
+2. **Lớp text PDF**: PDF cuối cùng theo tên (chứa trang cuối sách). Theo quy tắc [Lớp text của PDF](#lớp-text-của-pdf):
+   một trang lỗi Unicode là không dùng.
+3. **Chandra OCR** từng trang **từ trang cuối lên** (tối đa `BOOK_LAST_PAGES`), dừng ngay ở trang thông tin xuất bản.
+   Thư mục ảnh thì OCR các ảnh cuối theo tên.
+
+Trang chọn là trang có *Chịu trách nhiệm xuất bản* / *In xong*; không có thì trang tách được nhiều trường nhất. Khối text
+lấy từ phần NXB phía trên dòng *Chịu trách nhiệm xuất bản* trở xuống. Các trang khác (vd bìa sau) chỉ bổ sung địa chỉ,
+điện thoại, fax NXB.
+
+| Trường | Ví dụ |
+|---|---|
+| `nha_xuat_ban` | NHÀ XUẤT BẢN CHÍNH TRỊ QUỐC GIA SỰ THẬT |
+| `isbn` | 978-604-57-6547-0 |
+| `luu_chieu`, `luu_chieu_thang`, `luu_chieu_nam` | In xong và nộp lưu chiểu tháng 3 năm 2021. · 3 · 2021 |
+| `giam_doc_tong_bien_tap` | PGS.TS. PHẠM MINH TUẤN |
+| `ban_bien_tap`, `che_ban`, `trinh_bay_bia` | tên người, nhiều người cách nhau `; ` |
+| `dia_chi_nxb`, `dien_thoai_nxb`, `fax_nxb`, `sdt_quan_ly_xuat_ban`, `sdt_tong_bien_tap` | |
+| `dia_chi_co_so_in` | địa chỉ nhà in (dòng Địa chỉ gần dòng *In ... tại Công ty...*) |
+| `ngay_xac_nhan_dkxb` | 05/03/2021 |
+
+Tháng/năm lưu chiểu nhận: `tháng 3 năm 2021`, `tháng 03/2021`, `T3/2021`, `tháng 3-21`, `tháng ba năm 2021`, chữ lỗi font
+(`lou chieau`), dòng bị xuống dòng giữa câu. Chỉ có năm (`quý I năm 2021`) thì tháng `null`. Dòng In xong không có tháng
+thì lấy ngày **Quyết định xuất bản**; không lấy ngày Giấy phép.
+
+```json
+{
+  "thong_tin": {"nha_xuat_ban": "...", "isbn": "978-604-57-6547-0", "luu_chieu_thang": 3, "luu_chieu_nam": 2021, "...": "..."},
+  "field_count": 7,
+  "text": "khối thông tin xuất bản",
+  "source": "text_file | pdf_text | ocr | (rỗng: không tìm thấy)",
+  "file": "sach.pdf", "page": 162, "page_count": 162,
+  "error": "",
+  "input": {"files": ["sach.pdf"], "skipped": [{"file": "sach.docx", "reason": "..."}], "pdf_text": "lý do không dùng text PDF"},
+  "elapsed_ms": 700
+}
+```
+Không tìm thấy thì trả `field_count` 0 và `error`, không báo lỗi HTTP. Lưu DB ở bảng `book_metadata`.
+
+Lưu ý: file Word đi kèm có thể là **bản bông chưa cập nhật**. Ví dụ sách *Nguyễn Trãi* trong dữ liệu mẫu: Word ghi lưu chiểu
+tháng 4/2021, PDF in ghi tháng 02/2021. Muốn lấy theo PDF thì chỉ gửi PDF.
+
 ## Báo từ không có trong từ điển
 
 Sau khi OCR **và** sửa chính tả xong, mọi từ còn lại không có trong bộ từ điển đã nạp đều được báo ở 4 nơi:
@@ -378,7 +440,8 @@ Mẫu systemd (giá trị cố định):
 
 Cổng phải khớp `CHANDRA_URL` và `PHOWHISPER_URL` trong `.env`.
 API ở cổng `API_PORT` (mặc định 9090). Worker mặc định: prepare 2, ocr 2, spell 2, db 2 (đổi bằng `PREPARE_WORKERS`, `OCR_WORKERS`, `SPELL_WORKERS`, `DB_WORKERS`);
-speech mỗi hàng đợi 1 (`SPEECH_PREPARE_WORKERS`, `SPEECH_ASR_WORKERS`, `SPEECH_SPELL_WORKERS`, `SPEECH_DB_WORKERS`), log ở `logs/speech/`.
+speech mỗi hàng đợi 1 (`SPEECH_PREPARE_WORKERS`, `SPEECH_ASR_WORKERS`, `SPEECH_SPELL_WORKERS`, `SPEECH_DB_WORKERS`), log ở `logs/speech/`;
+metadata sách 1 (`BOOK_WORKERS`), log ở `logs/book/`.
 RabbitMQ, PostgreSQL và Flower nên chỉ nghe `127.0.0.1` (Flower do `start-service.sh` bật đã như vậy).
 
 ## Bảo mật

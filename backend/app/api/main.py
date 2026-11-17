@@ -20,9 +20,10 @@ from ..pipeline import speech
 from ..pipeline.pages import TooManyPages, UnsupportedFile
 from ..spell.compare import compare_lines
 from ..worker.celery_app import celery_app
+from ..worker.book_tasks import submit_book
 from ..worker.speech_tasks import submit_speech
 from ..worker.tasks import submit_fullpage
-from . import documents, transcripts, uploads
+from . import books, documents, transcripts, uploads
 from .schemas import (
     FullPageRequest,
     SpeechRequest,
@@ -108,6 +109,12 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
         """Nhận việc OCR toàn trang vào hàng đợi."""
         request_id = await queue_job(req, submit_fullpage, "full-page OCR")
         return SubmitResponse(error_code=202, error_message="Đã nhận yêu cầu OCR toàn trang.", request_id=request_id)
+
+    @api.post("/book-metadata", response_model=SubmitResponse, status_code=202)
+    async def book_metadata(req: FullPageRequest):
+        """Nhận việc lấy metadata sách (trang cuối) vào hàng đợi."""
+        request_id = await queue_job(req, submit_book, "book metadata")
+        return SubmitResponse(error_code=202, error_message="Đã nhận yêu cầu lấy metadata sách.", request_id=request_id)
 
     @api.post("/speech-to-text", response_model=SubmitResponse, status_code=202)
     async def speech_to_text(req: SpeechRequest):
@@ -220,6 +227,7 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
     # Cho web xem kết quả
     api.include_router(documents.build_router(settings))
     api.include_router(transcripts.build_router(settings))
+    api.include_router(books.build_router(settings))
     # Tải file lên từ máy
     api.include_router(uploads.build_router(settings))
     app.include_router(api)

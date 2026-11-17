@@ -46,7 +46,7 @@ Nhớ mở cổng trên tường lửa nếu cần, ví dụ `sudo ufw allow 808
 ## Dùng
 
 1. Nhập **API key** (một khóa trong `API_KEYS` của backend; lưu trên trình duyệt). Chấm xanh cạnh ô là backend đang chạy.
-2. Chọn tab **OCR tài liệu** hoặc **Trích xuất lời nói**.
+2. Chọn tab **OCR tài liệu**, **Trích xuất lời nói** hoặc **Metadata sách** (thông tin xuất bản ở trang cuối; mặc định cả lô là một cuốn).
 3. Chọn file bằng **Chọn file** (chọn được nhiều file), **Chọn thư mục** (lấy mọi file trong thư mục và thư mục con),
    hoặc **kéo thả** file / thư mục vào khung. File không hỗ trợ bị bỏ qua và liệt kê ra.
 4. **Gộp thành một tài liệu**: tự bật khi chọn thư mục.
