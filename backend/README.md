@@ -409,14 +409,16 @@ nên không bật mặc định).
 
 ## Triển khai
 
-Cần RabbitMQ, PostgreSQL, Chandra (vLLM) và ProtonX chạy sẵn (hoặc để `start-service.sh` bật ProtonX):
+Cần RabbitMQ, PostgreSQL, Chandra (vLLM) và ProtonX chạy sẵn (hoặc để `start-service.sh` bật ProtonX).
+RabbitMQ và PostgreSQL có thể bật bằng `docker compose up -d` (`docker-compose.yaml`; điền user/mật khẩu khớp
+`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, rồi tạo thêm database `POSTGRES_DB` cho kết quả):
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 sudo apt install antiword catdoc libreoffice-writer-nogui   # đọc .doc / .odt / .rtf
 sudo apt install ffmpeg                                      # giải mã âm thanh cho speech-to-text
 # Sửa .env: điền API_KEYS, CELERY_BROKER_URL, CELERY_RESULT_BACKEND, POSTGRES_*; sửa CHANDRA_URL, SPELLFIX_API_URL
 python -c "import secrets; print(secrets.token_urlsafe(32))"   # dùng để tạo khóa/mật khẩu (an toàn cho URL)
-VENV_BIN=$PWD/.venv/bin ./start-service.sh
+VENV_BIN=$PWD/.venv/bin ./start-service.sh   # hoặc ghi VENV_BIN trong .env, vd conda: /path/to/anaconda3/envs/<env>/bin
 # ProtonX trong cùng venv: .venv/bin/pip install -r requirements-spellfix.txt, rồi START_SPELLFIX=true (nghe 127.0.0.1:8006)
 # Chandra trong cùng venv (cần vllm): START_CHANDRA=true (nghe 127.0.0.1:CHANDRA_PORT)
 # PhoWhisper trong cùng venv (cần pip install "vllm[audio]"): START_PHOWHISPER=true (nghe 127.0.0.1:PHOWHISPER_PORT)
@@ -434,11 +436,12 @@ Mẫu systemd (giá trị cố định):
 
 | File | Chạy |
 |---|---|
-| `service/ocr-fullpage.service` | `start-service.sh` / `stop-service.sh` trong `/opt/ocr-fullpage/backend` |
-| `service/vllm-chandra.service` | `datalab-to/chandra-ocr-2`, GPU 0, cổng 8101, max-model-len 6000, VRAM 0.95, batched tokens 9216, 20 seqs, prefix caching |
-| `service/vllm-phowhisper.service` | `vinai/PhoWhisper-large` (tên gọi `phowhisper-large`), GPU 0, cổng 8120, fp16 (khoảng 3 GB VRAM), VRAM 0.8, 64 seqs |
+| `service/ocr-fullpage.service` | `start-service.sh` / `stop-service.sh` trong `/path/to/ocr-toanvan/backend`, user `your_user`, `VENV_BIN` `/path/to/python-env/bin` |
+| `service/vllm-chandra.service` | Chandra (`CHANDRA_MODEL`), GPU 0, cổng 8101, max-model-len 8192, VRAM 0.6, batched tokens 9216, 8 seqs, prefix caching |
+| `service/vllm-phowhisper.service` | PhoWhisper (`PHOWHISPER_MODEL`), GPU 0, cổng 8120, fp16 (khoảng 3 GB VRAM), VRAM 0.5, 64 seqs |
 
-Cổng phải khớp `CHANDRA_URL` và `PHOWHISPER_URL` trong `.env`.
+Cổng phải khớp `CHANDRA_URL` và `PHOWHISPER_URL` trong `.env`. Model trong file service phải **giống hệt** `CHANDRA_MODEL` và
+`PHOWHISPER_MODEL` (đường dẫn snapshot trên máy), vì vLLM nhận tên model đúng bằng chuỗi sau `vllm serve` và worker gửi đúng chuỗi đó.
 API ở cổng `API_PORT` (mặc định 9090). Worker mặc định: prepare 2, ocr 2, spell 2, db 2 (đổi bằng `PREPARE_WORKERS`, `OCR_WORKERS`, `SPELL_WORKERS`, `DB_WORKERS`);
 speech mỗi hàng đợi 1 (`SPEECH_PREPARE_WORKERS`, `SPEECH_ASR_WORKERS`, `SPEECH_SPELL_WORKERS`, `SPEECH_DB_WORKERS`), log ở `logs/speech/`;
 metadata sách 1 (`BOOK_WORKERS`), log ở `logs/book/`.

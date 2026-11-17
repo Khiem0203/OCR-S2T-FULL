@@ -3,13 +3,13 @@ Description=vLLM Service for datalab-to/chandra-ocr-2
 After=network.target
 
 [Service]
-User=cntt
-Group=cntt
-WorkingDirectory=/home/cntt/ocr-fullpage/backend
-Environment="PATH=/home/cntt/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+User=your_user
+Group=your_group
+WorkingDirectory=/path/to/ocr-toanvan/backend
+Environment="PATH=/path/to/python-env/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="HF_HUB_OFFLINE=1"
 Environment="CUDA_VISIBLE_DEVICES=0"
-ExecStart=/home/cntt/.venv/bin/vllm serve datalab-to/chandra-ocr-2 \
+ExecStart=/path/to/python-env/bin/vllm serve /path/to/models--datalab-to--chandra-ocr-2/snapshots/<snapshot_id> \
     --host 0.0.0.0 \
     --port 8101 \
     --trust-remote-code \

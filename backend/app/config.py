@@ -69,7 +69,7 @@ class Settings:
 
     # Speech-to-text: PhoWhisper (vLLM)
     phowhisper_url: str = "http://localhost:8120/v1/audio/transcriptions"
-    phowhisper_model: str = "phowhisper-large"
+    phowhisper_model: str = "vinai/PhoWhisper-large"
     phowhisper_timeout: float = 300.0
     asr_concurrency: int = 16
     speech_language: str = "vi"
@@ -178,7 +178,7 @@ def load_settings() -> Settings:
         chandra_timeout=_float("CHANDRA_TIMEOUT", d.chandra_timeout),
         ocr_concurrency=max(1, _int("OCR_CONCURRENCY", d.ocr_concurrency)),
         phowhisper_url=_str("PHOWHISPER_URL", d.phowhisper_url),
-        phowhisper_model=_str("PHOWHISPER_MODEL_NAME", d.phowhisper_model),
+        phowhisper_model=_str("PHOWHISPER_MODEL", d.phowhisper_model),
         phowhisper_timeout=_float("PHOWHISPER_TIMEOUT", d.phowhisper_timeout),
         asr_concurrency=max(1, _int("ASR_CONCURRENCY", d.asr_concurrency)),
         speech_language=_str("SPEECH_LANGUAGE", d.speech_language),

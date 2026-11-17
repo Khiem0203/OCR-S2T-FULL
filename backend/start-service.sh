@@ -15,6 +15,8 @@ else
 fi
 
 BIN="${VENV_BIN:+$VENV_BIN/}"
+# Công cụ cài trong env (ffmpeg...) cũng tìm thấy
+if [ -n "${VENV_BIN:-}" ]; then export PATH="$VENV_BIN:$PATH"; fi
 CELERY="${BIN}celery"
 UVICORN="${BIN}uvicorn"
 
@@ -26,7 +28,7 @@ UVICORN="${BIN}uvicorn"
 : "${CHANDRA_MAX_NUM_BATCHED_TOKENS:=9216}" "${CHANDRA_MAX_NUM_SEQS:=20}" "${CHANDRA_PREFIX_CACHING:=true}"
 : "${CHANDRA_API_KEY:=}" "${CHANDRA_VLLM_EXTRA_ARGS:=}"
 : "${START_PHOWHISPER:=false}" "${PHOWHISPER_CUDA_DEVICE:=0}" "${PHOWHISPER_PORT:=8120}"
-: "${PHOWHISPER_MODEL:=vinai/PhoWhisper-large}" "${PHOWHISPER_MODEL_NAME:=phowhisper-large}"
+: "${PHOWHISPER_MODEL:=vinai/PhoWhisper-large}"
 : "${PHOWHISPER_GPU_MEMORY_UTILIZATION:=0.8}" "${PHOWHISPER_MAX_NUM_SEQS:=64}"
 : "${PHOWHISPER_API_KEY:=}" "${PHOWHISPER_VLLM_EXTRA_ARGS:=}"
 : "${START_SPELLFIX:=false}" "${SPELLFIX_CUDA_DEVICE:=0}"
@@ -103,7 +105,7 @@ fi
 if [ "$START_PHOWHISPER" = "true" ]; then
     # Cần vllm[audio]
     command -v "${BIN}vllm" >/dev/null 2>&1 || fail "START_PHOWHISPER=true but vllm not found; set VENV_BIN"
-    phowhisper_args=(--host 127.0.0.1 --port "$PHOWHISPER_PORT" --served-model-name "$PHOWHISPER_MODEL_NAME"
+    phowhisper_args=(--host 127.0.0.1 --port "$PHOWHISPER_PORT"
         --dtype float16 --max-model-len 448 --disable-log-stats
         --gpu-memory-utilization "$PHOWHISPER_GPU_MEMORY_UTILIZATION" --max-num-seqs "$PHOWHISPER_MAX_NUM_SEQS")
     [ -n "$PHOWHISPER_API_KEY" ] && phowhisper_args+=(--api-key "$PHOWHISPER_API_KEY")

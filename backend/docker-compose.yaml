@@ -1,0 +1,45 @@
+# version: '3.8'
+
+services:
+  # RabbitMQ: The message broker for Celery tasks
+  rabbitmq:
+    image: rabbitmq:3.9-management-alpine
+    container_name: ocr-rabbitmq
+    hostname: rabbitmq-host
+    environment:
+      # Default user and password, same as in your CELERY_BROKER_URL
+      - RABBITMQ_DEFAULT_USER=your_rabbitmq_user
+      - RABBITMQ_DEFAULT_PASS=your_rabbitmq_password
+    ports:
+      # Port for Celery workers to connect
+      - "5672:5672"
+      # Port for the RabbitMQ Management Web UI
+      - "15672:15672"
+    volumes:
+      # This persists RabbitMQ data across container restarts
+      - rabbitmq_data:/var/lib/rabbitmq/
+    restart: always
+
+  # PostgreSQL: The result backend for storing task status and results
+  postgres:
+    image: postgres:14-alpine
+    container_name: ocr-postgres
+    hostname: postgres-host
+    environment:
+      # Credentials must match your CELERY_RESULT_BACKEND
+      - POSTGRES_USER=your_celery_db_user
+      - POSTGRES_PASSWORD=your_celery_db_password
+      - POSTGRES_DB=celery_results
+    ports:
+      # Port for Celery and your DB client to connect
+      - "5432:5432"
+    volumes:
+      # This persists the PostgreSQL database across container restarts
+      - postgres_data:/var/lib/postgresql/data/
+    restart: always
+
+# Define named volumes to persist data
+volumes:
+  rabbitmq_data:
+  postgres_data:
+

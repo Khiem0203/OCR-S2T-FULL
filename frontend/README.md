@@ -11,37 +11,36 @@ public/
 ├── style.css    giao diện (tự sáng/tối theo máy)
 └── app.js       chọn file, tải lên, theo dõi việc, xem kết quả
 server.py        trang tĩnh + chuyển tiếp /api sang BACKEND_URL
-run.sh           chạy trên Linux
+start-frontend.sh  bật chạy nền (log ở logs/, pid ở run/)
+stop-frontend.sh   dừng
 .env             FRONTEND_HOST, FRONTEND_PORT, BACKEND_URL
 frontend.service mẫu systemd
 ```
 
 ## Chạy trên Linux
 
-Dùng chung venv với backend (đã có `starlette`, `uvicorn`, `httpx`):
+Dùng chung môi trường Python với backend (đã có `starlette`, `uvicorn`, `httpx`), đặt bằng `VENV_BIN` trong `.env`
+(vd conda: `/path/to/anaconda3/envs/<env>/bin`).
 
 ```bash
 cd frontend
-VENV_BIN=../backend/.venv/bin ./run.sh
-# Frontend on http://0.0.0.0:8080 -> backend http://127.0.0.1:9090
+./start-frontend.sh   # bật, chạy nền
+./stop-frontend.sh    # dừng
+tail -f logs/frontend_*.log   # xem log
 ```
 
-Đổi cổng và địa chỉ trong `frontend/.env` hoặc ngay trên dòng lệnh:
-
-```bash
-FRONTEND_PORT=3000 BACKEND_URL=http://10.0.0.5:9090 VENV_BIN=../backend/.venv/bin ./run.sh
-```
+Đổi cổng và địa chỉ trong `frontend/.env` rồi chạy lại `./stop-frontend.sh && ./start-frontend.sh`.
 
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
 | `FRONTEND_HOST` | `0.0.0.0` | Nghe trên mọi card mạng; máy khác trong mạng mở được `http://<ip-máy>:<cổng>` |
-| `FRONTEND_PORT` | `8080` | Cổng tùy ý |
+| `FRONTEND_PORT` | `6767` | Cổng tùy ý |
 | `BACKEND_URL` | `http://127.0.0.1:9090` | Địa chỉ API backend (`API_PORT` của backend) |
 
-Chạy nền bằng systemd: `frontend.service` ghi cố định cổng 8080, nghe `0.0.0.0`, backend `http://127.0.0.1:9090`,
-venv `/opt/ocr-fullpage/backend/.venv` (không đọc `.env`; muốn đổi thì sửa thẳng trong file), rồi
+Chạy nền bằng systemd: `frontend.service` ghi cố định cổng 6767, nghe `0.0.0.0`, backend `http://127.0.0.1:9090`,
+môi trường `/path/to/python-env/bin`, thư mục `/path/to/ocr-toanvan/frontend`, user `your_user` (không đọc `.env`; muốn đổi thì sửa thẳng trong file), rồi
 `sudo cp frontend.service /etc/systemd/system/ && sudo systemctl enable --now frontend`.
-Nhớ mở cổng trên tường lửa nếu cần, ví dụ `sudo ufw allow 8080/tcp`.
+Nhớ mở cổng trên tường lửa nếu cần, ví dụ `sudo ufw allow 6767/tcp`.
 
 ## Dùng
 
