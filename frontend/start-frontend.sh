@@ -69,8 +69,22 @@ mkdir -p "$LOG_DIR" "$RUN_DIR"
 
 activate_conda || exit 1
 
+# Thư mục bin của env: đặt lên đầu PATH và chạy uvicorn/celery/vllm từ đây
+# (shell đã bật sẵn env thì ~/.local/bin có thể đứng trước, lấy nhầm uvicorn của python hệ thống)
+if [ -n "$CONDA_PREFIX" ] && [ -x "$CONDA_PREFIX/bin/python" ]; then
+    ENV_BIN="$CONDA_PREFIX/bin"
+else
+    ENV_BIN="$(dirname "$(command -v python)")"
+fi
+export PATH="$ENV_BIN:$PATH" PYTHONNOUSERSITE=1
+hash -r
+PYTHON="$ENV_BIN/python"
+echo "Env bin: $ENV_BIN"
+
 cd "$PROJECT_DIR" || { echo "Error: Could not change to project directory $PROJECT_DIR"; exit 1; }
-command -v uvicorn > /dev/null || { echo "Error: uvicorn not found in Conda env '$CONDA_ENV'"; exit 1; }
+UVICORN="$ENV_BIN/uvicorn"
+[ -x "$UVICORN" ] && "$PYTHON" -c "import starlette, httpx" 2> /dev/null \
+    || { echo "Error: uvicorn/starlette/httpx not found in $ENV_BIN. Run: $PYTHON -m pip install -r requirements.txt"; exit 1; }
 
 # Hàm bật dịch vụ
 
@@ -85,7 +99,7 @@ start_frontend_server() {
         exit 1
     fi
     echo "Starting Frontend on $FRONTEND_HOST:$FRONTEND_PORT -> backend $BACKEND_URL..."
-    nohup uvicorn server:app --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --proxy-headers > "$log_file" 2>&1 &
+    nohup "$UVICORN" server:app --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --proxy-headers > "$log_file" 2>&1 &
     echo $! > "$RUN_DIR/frontend.pid"
     sleep 2
     if ! kill -0 "$(cat "$RUN_DIR/frontend.pid")" 2>/dev/null; then

@@ -107,6 +107,18 @@ mkdir -p "$RUN_DIR"
 
 activate_conda || exit 1
 
+# Thư mục bin của env: đặt lên đầu PATH và chạy uvicorn/celery/vllm từ đây
+# (shell đã bật sẵn env thì ~/.local/bin có thể đứng trước, lấy nhầm uvicorn của python hệ thống)
+if [ -n "$CONDA_PREFIX" ] && [ -x "$CONDA_PREFIX/bin/python" ]; then
+    ENV_BIN="$CONDA_PREFIX/bin"
+else
+    ENV_BIN="$(dirname "$(command -v python)")"
+fi
+export PATH="$ENV_BIN:$PATH" PYTHONNOUSERSITE=1
+hash -r
+PYTHON="$ENV_BIN/python"
+echo "Env bin: $ENV_BIN"
+
 cd "$PROJECT_DIR" || { echo "Error: Could not change to project directory $PROJECT_DIR"; exit 1; }
 
 # Kiểm tra cấu hình
@@ -115,8 +127,11 @@ cd "$PROJECT_DIR" || { echo "Error: Could not change to project directory $PROJE
 if [ -z "$API_KEYS" ] && [ "$AUTH_DISABLED" != "true" ]; then
     echo "Error: API_KEYS is not set (or set AUTH_DISABLED=true for local use)"; exit 1
 fi
-command -v celery  > /dev/null || { echo "Error: celery not found in Conda env '$CONDA_ENV'"; exit 1; }
-command -v uvicorn > /dev/null || { echo "Error: uvicorn not found in Conda env '$CONDA_ENV'"; exit 1; }
+UVICORN="$ENV_BIN/uvicorn"
+CELERY="$ENV_BIN/celery"
+VLLM="$ENV_BIN/vllm"
+[ -x "$UVICORN" ] && [ -x "$CELERY" ] \
+    || { echo "Error: uvicorn/celery not found in $ENV_BIN. Run: $PYTHON -m pip install -r requirements.txt"; exit 1; }
 if [ -s "$RUN_DIR/api.pid" ] && kill -0 "$(cat "$RUN_DIR/api.pid")" 2>/dev/null; then
     echo "Error: services are already running (API PID $(cat "$RUN_DIR/api.pid")). Run ./stop-service.sh first."
     exit 1
@@ -136,7 +151,7 @@ start_fastapi_server() {
         exit 1
     fi
     echo "Starting FastAPI API Server on port $API_PORT..."
-    nohup uvicorn app.api.main:create_app --factory --host 0.0.0.0 --port "$API_PORT" > "$log_file" 2>&1 &
+    nohup "$UVICORN" app.api.main:create_app --factory --host 0.0.0.0 --port "$API_PORT" > "$log_file" 2>&1 &
     echo $! > "$RUN_DIR/api.pid"
     echo "FastAPI server started. Log: $log_file. PID: $!"
 }
@@ -145,7 +160,7 @@ start_fastapi_server() {
 start_workers() {
     local queue=$1 subdir=$2 count=$3 concurrency=$4 i
     for ((i = 1; i <= count; i++)); do
-        nohup celery -A app.worker.celery_app worker --loglevel=INFO \
+        nohup "$CELERY" -A app.worker.celery_app worker --loglevel=INFO \
             --queues="$queue" --hostname="${queue}_worker_${i}@%h" --concurrency="$concurrency" \
             --logfile="$LOG_DIR/$subdir/${queue}_worker_${i}_$STAMP.log" > /dev/null 2>&1 &
         echo $! >> "$RUN_DIR/workers.pid"
@@ -198,16 +213,19 @@ echo "  Starting OCR & Speech-to-text Services"
 echo "========================================"
 
 # 1. Bật model (chỉ khi START_*=true trong .env)
-if [ "$START_SPELLFIX" = "true" ]; then
+if [ "$START_SPELLFIX" = "true" ] && ! "$PYTHON" -c "import torch, transformers" 2> /dev/null; then
+    echo "Warning: torch/transformers not installed for $PYTHON, skip SPELLFIX."
+    echo "         Run: $PYTHON -m pip install -r requirements-spellfix.txt"
+elif [ "$START_SPELLFIX" = "true" ]; then
     log_file="$LOG_DIR/services/spellfix_$STAMP.log"
     export SPELLFIX_CUDA_DEVICE
     start_model_service SPELLFIX "$SPELLFIX_PORT" "$SPELLFIX_CUDA_DEVICE" "$log_file" \
-        uvicorn app.services.spellfix_api:app --host 127.0.0.1 --port "$SPELLFIX_PORT"
+        "$UVICORN" app.services.spellfix_api:app --host 127.0.0.1 --port "$SPELLFIX_PORT"
     wait_service_ready SPELLFIX "$SPELLFIX_PORT" "$SPELLFIX_WAIT" "$log_file"
 fi
 
 if [ "$START_CHANDRA" = "true" ]; then
-    command -v vllm > /dev/null || { echo "Error: START_CHANDRA=true but vllm not found"; exit 1; }
+    [ -x "$VLLM" ] || { echo "Error: START_CHANDRA=true but $VLLM not found"; exit 1; }
     log_file="$LOG_DIR/services/chandra_$STAMP.log"
     chandra_args=(--host 127.0.0.1 --port "$CHANDRA_PORT" --trust-remote-code --disable-log-stats
         --max-model-len "$CHANDRA_MAX_MODEL_LEN" --gpu-memory-utilization "$CHANDRA_GPU_MEMORY_UTILIZATION"
@@ -215,18 +233,18 @@ if [ "$START_CHANDRA" = "true" ]; then
     [ "$CHANDRA_PREFIX_CACHING" = "true" ] && chandra_args+=(--enable-prefix-caching)
     [ -n "$CHANDRA_API_KEY" ] && chandra_args+=(--api-key "$CHANDRA_API_KEY")
     start_model_service CHANDRA "$CHANDRA_PORT" "$CHANDRA_CUDA_DEVICE" "$log_file" \
-        vllm serve "$CHANDRA_MODEL" "${chandra_args[@]}" $CHANDRA_VLLM_EXTRA_ARGS
+        "$VLLM" serve "$CHANDRA_MODEL" "${chandra_args[@]}" $CHANDRA_VLLM_EXTRA_ARGS
     wait_service_ready CHANDRA "$CHANDRA_PORT" "$CHANDRA_WAIT" "$log_file"
 fi
 
 if [ "$START_PHOWHISPER" = "true" ]; then
-    command -v vllm > /dev/null || { echo "Error: START_PHOWHISPER=true but vllm not found (cần vllm[audio])"; exit 1; }
+    [ -x "$VLLM" ] || { echo "Error: START_PHOWHISPER=true but $VLLM not found (cần vllm[audio])"; exit 1; }
     log_file="$LOG_DIR/services/phowhisper_$STAMP.log"
     phowhisper_args=(--host 127.0.0.1 --port "$PHOWHISPER_PORT" --dtype float16 --max-model-len 448 --disable-log-stats
         --gpu-memory-utilization "$PHOWHISPER_GPU_MEMORY_UTILIZATION" --max-num-seqs "$PHOWHISPER_MAX_NUM_SEQS")
     [ -n "$PHOWHISPER_API_KEY" ] && phowhisper_args+=(--api-key "$PHOWHISPER_API_KEY")
     start_model_service PHOWHISPER "$PHOWHISPER_PORT" "$PHOWHISPER_CUDA_DEVICE" "$log_file" \
-        vllm serve "$PHOWHISPER_MODEL" "${phowhisper_args[@]}" $PHOWHISPER_VLLM_EXTRA_ARGS
+        "$VLLM" serve "$PHOWHISPER_MODEL" "${phowhisper_args[@]}" $PHOWHISPER_VLLM_EXTRA_ARGS
     wait_service_ready PHOWHISPER "$PHOWHISPER_PORT" "$PHOWHISPER_WAIT" "$log_file"
 fi
 
@@ -249,7 +267,7 @@ start_workers book_queue             book    "$BOOK_WORKERS"           2
 if [ "$START_FLOWER" = "true" ]; then
     [ -n "$FLOWER_BASIC_AUTH" ] || { echo "Error: START_FLOWER=true needs FLOWER_BASIC_AUTH (user:password)"; exit 1; }
     log_file="$LOG_DIR/services/flower_$STAMP.log"
-    nohup celery -A app.worker.celery_app flower --address=127.0.0.1 --port=5555 \
+    nohup "$CELERY" -A app.worker.celery_app flower --address=127.0.0.1 --port=5555 \
         --basic-auth="$FLOWER_BASIC_AUTH" > "$log_file" 2>&1 &
     echo $! > "$RUN_DIR/FLOWER.pid"
     echo "Flower started on 127.0.0.1:5555. Log: $log_file. PID: $!"
