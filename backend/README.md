@@ -418,7 +418,7 @@ sudo apt install antiword catdoc libreoffice-writer-nogui   # đọc .doc / .odt
 sudo apt install ffmpeg                                      # giải mã âm thanh cho speech-to-text
 # Sửa .env: điền API_KEYS, CELERY_BROKER_URL, CELERY_RESULT_BACKEND, POSTGRES_*; sửa CHANDRA_URL, SPELLFIX_API_URL
 python -c "import secrets; print(secrets.token_urlsafe(32))"   # dùng để tạo khóa/mật khẩu (an toàn cho URL)
-./start-service.sh   # tự kích hoạt Conda env CONDA_ENV_NAME (CONDA_PATH) trong .env
+./start-service.sh   # tự kích hoạt Conda env CONDA_ENV (tên hoặc đường dẫn env) trong .env
 # ProtonX trong cùng env: pip install -r requirements-spellfix.txt, rồi START_SPELLFIX=true (nghe 127.0.0.1:SPELLFIX_PORT)
 # Chandra trong cùng env (cần vllm): START_CHANDRA=true (nghe 127.0.0.1:CHANDRA_PORT)
 # PhoWhisper trong cùng env (cần pip install "vllm[audio]"): START_PHOWHISPER=true (nghe 127.0.0.1:PHOWHISPER_PORT)

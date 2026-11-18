@@ -19,8 +19,8 @@ frontend.service mẫu systemd
 
 ## Chạy trên Linux
 
-Dùng chung Conda env với backend (đã có `starlette`, `uvicorn`, `httpx`), đặt bằng `CONDA_PATH`, `CONDA_ENV_NAME` trong `.env`
-(vd `/path/to/anaconda3/condabin/conda`, `your_conda_env`).
+Dùng chung Conda env với backend (đã có `starlette`, `uvicorn`, `httpx`), đặt bằng `CONDA_ENV` (tên hoặc đường dẫn env) trong `.env`
+(vd `/path/to/anaconda3/envs/your_conda_env`).
 
 ```bash
 cd frontend

@@ -16,8 +16,47 @@ else
 fi
 
 # Môi trường
-CONDA_PATH="${CONDA_PATH:-/path/to/anaconda3/condabin/conda}"
-CONDA_ENV_NAME="${CONDA_ENV_NAME-ocr}"
+# CONDA_ENV: tên env (ocr) hoặc đường dẫn env (/path/to/anaconda3/envs/ocr); để trống = dùng python trong PATH
+CONDA_ENV="${CONDA_ENV-${CONDA_ENV_NAME-ocr}}"
+CONDA_PATH="${CONDA_PATH:-}"
+
+# Kích hoạt Conda env; không có conda.sh thì thêm thẳng thư mục bin của env vào PATH
+activate_conda() {
+    if [ -z "$CONDA_ENV" ]; then
+        echo "CONDA_ENV is empty, using python in PATH: $(command -v python)"
+        return 0
+    fi
+    local env_dir="" base="" conda_sh="" b
+    if [ -d "$CONDA_ENV" ]; then
+        env_dir="$(cd "$CONDA_ENV" && pwd)"
+        base="$(dirname "$(dirname "$env_dir")")"
+    fi
+    for b in "$base" "${CONDA_PATH:+$(dirname "$(dirname "$CONDA_PATH")")}" \
+             "${CONDA_EXE:+$(dirname "$(dirname "$CONDA_EXE")")}" \
+             "$HOME/anaconda3" "$HOME/miniconda3" "/opt/conda" "/opt/anaconda3" "/opt/miniconda3"; do
+        if [ -n "$b" ] && [ -f "$b/etc/profile.d/conda.sh" ]; then
+            conda_sh="$b/etc/profile.d/conda.sh"
+            [ -z "$env_dir" ] && [ -d "$b/envs/$CONDA_ENV" ] && env_dir="$b/envs/$CONDA_ENV"
+            break
+        fi
+    done
+    echo "Activating Conda environment: $CONDA_ENV"
+    if [ -n "$conda_sh" ]; then
+        source "$conda_sh"
+        if conda activate "${env_dir:-$CONDA_ENV}"; then
+            echo "Conda env active: $CONDA_PREFIX (python: $(command -v python))"
+            return 0
+        fi
+        echo "Warning: conda activate failed, trying env bin directly."
+    fi
+    if [ -n "$env_dir" ] && [ -x "$env_dir/bin/python" ]; then
+        export PATH="$env_dir/bin:$PATH" CONDA_PREFIX="$env_dir"
+        echo "Using env bin directly: $env_dir/bin (python: $(command -v python))"
+        return 0
+    fi
+    echo "Error: Conda env '$CONDA_ENV' not found. Set CONDA_ENV in .env to the env path, e.g. /path/to/anaconda3/envs/ocr"
+    return 1
+}
 
 # API và worker
 API_PORT="${API_PORT:-9090}"
@@ -66,17 +105,7 @@ mkdir -p "$LOG_DIR/api" "$LOG_DIR/prepare" "$LOG_DIR/ocr" "$LOG_DIR/spell" "$LOG
 mkdir -p "$PROJECT_DIR/temp_processing"
 mkdir -p "$RUN_DIR"
 
-if [ -n "$CONDA_ENV_NAME" ]; then
-    echo "Activating Conda environment: $CONDA_ENV_NAME"
-    if [ -f "$(dirname "$CONDA_PATH")/../etc/profile.d/conda.sh" ]; then
-        source "$(dirname "$CONDA_PATH")/../etc/profile.d/conda.sh"
-    else
-        echo "Error: conda.sh not found. Check CONDA_PATH ($CONDA_PATH)."
-        exit 1
-    fi
-    conda activate "$CONDA_ENV_NAME"
-    if [ $? -ne 0 ]; then echo "Error: Failed to activate Conda env '$CONDA_ENV_NAME'."; exit 1; fi
-fi
+activate_conda || exit 1
 
 cd "$PROJECT_DIR" || { echo "Error: Could not change to project directory $PROJECT_DIR"; exit 1; }
 
@@ -86,8 +115,8 @@ cd "$PROJECT_DIR" || { echo "Error: Could not change to project directory $PROJE
 if [ -z "$API_KEYS" ] && [ "$AUTH_DISABLED" != "true" ]; then
     echo "Error: API_KEYS is not set (or set AUTH_DISABLED=true for local use)"; exit 1
 fi
-command -v celery  > /dev/null || { echo "Error: celery not found in Conda env '$CONDA_ENV_NAME'"; exit 1; }
-command -v uvicorn > /dev/null || { echo "Error: uvicorn not found in Conda env '$CONDA_ENV_NAME'"; exit 1; }
+command -v celery  > /dev/null || { echo "Error: celery not found in Conda env '$CONDA_ENV'"; exit 1; }
+command -v uvicorn > /dev/null || { echo "Error: uvicorn not found in Conda env '$CONDA_ENV'"; exit 1; }
 if [ -s "$RUN_DIR/api.pid" ] && kill -0 "$(cat "$RUN_DIR/api.pid")" 2>/dev/null; then
     echo "Error: services are already running (API PID $(cat "$RUN_DIR/api.pid")). Run ./stop-service.sh first."
     exit 1
