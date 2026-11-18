@@ -1,46 +1,88 @@
 #!/bin/bash
-# Bật frontend chạy nền; cấu hình trong .env.
+# Khởi động frontend (trang web tải file lên)
 
-set -u
-FRONTEND_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$FRONTEND_DIR" || exit 1
+# Cấu hình
 
-if [ -f .env ]; then
+# Script nằm ở frontend/, .env cùng thư mục
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$PROJECT_DIR/.env"
+if [ -f "$ENV_FILE" ]; then
     set -a
-    # shellcheck disable=SC1091
-    . ./.env
+    source <(tr -d '\r' < "$ENV_FILE")
     set +a
+    echo "Loaded .env from $ENV_FILE"
+else
+    echo "Warning: .env file not found at $ENV_FILE"
 fi
 
-: "${FRONTEND_HOST:=0.0.0.0}" "${FRONTEND_PORT:=6767}" "${BACKEND_URL:=http://127.0.0.1:9090}"
-BIN="${VENV_BIN:+$VENV_BIN/}"
-if [ -n "${VENV_BIN:-}" ]; then export PATH="$VENV_BIN:$PATH"; fi
+FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+FRONTEND_PORT="${FRONTEND_PORT:-6767}"
+export BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:9090}"
 
-fail() { echo "Error: $*" >&2; exit 1; }
+# Môi trường (dùng chung với backend)
+CONDA_PATH="${CONDA_PATH:-/path/to/anaconda3/condabin/conda}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME-ocr}"
 
-command -v "${BIN}uvicorn" >/dev/null 2>&1 || fail "uvicorn not found; set VENV_BIN"
+# Khởi động
+LOG_DIR="$PROJECT_DIR/logs"
+RUN_DIR="$PROJECT_DIR/run"
+mkdir -p "$LOG_DIR" "$RUN_DIR"
 
-LOG_DIR="$FRONTEND_DIR/logs"
-RUN_DIR="$FRONTEND_DIR/run"
-PID_FILE="$RUN_DIR/frontend.pid"
-mkdir -p "$LOG_DIR" "$RUN_DIR" || fail "cannot create $LOG_DIR or $RUN_DIR"
-
-if [ -s "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-    fail "frontend is already running (PID $(cat "$PID_FILE")); run ./stop-frontend.sh first"
+if [ -n "$CONDA_ENV_NAME" ]; then
+    echo "Activating Conda environment: $CONDA_ENV_NAME"
+    if [ -f "$(dirname "$CONDA_PATH")/../etc/profile.d/conda.sh" ]; then
+        source "$(dirname "$CONDA_PATH")/../etc/profile.d/conda.sh"
+    else
+        echo "Error: conda.sh not found. Check CONDA_PATH ($CONDA_PATH)."
+        exit 1
+    fi
+    conda activate "$CONDA_ENV_NAME"
+    if [ $? -ne 0 ]; then echo "Error: Failed to activate Conda env '$CONDA_ENV_NAME'."; exit 1; fi
 fi
 
-export BACKEND_URL
-LOG_FILE="$LOG_DIR/frontend_$(date +%Y%m%d_%H%M%S).log"
-nohup "${BIN}uvicorn" server:app --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --proxy-headers \
-    > "$LOG_FILE" 2>&1 &
-echo $! > "$PID_FILE"
+cd "$PROJECT_DIR" || { echo "Error: Could not change to project directory $PROJECT_DIR"; exit 1; }
+command -v uvicorn > /dev/null || { echo "Error: uvicorn not found in Conda env '$CONDA_ENV_NAME'"; exit 1; }
 
-sleep 2
-if ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-    rm -f "$PID_FILE"
-    tail -n 20 "$LOG_FILE" >&2
-    fail "frontend exited right after start (log: $LOG_FILE)"
+# Hàm bật dịch vụ
+
+start_frontend_server() {
+    local log_file="$LOG_DIR/frontend_$(date +%Y%m%d_%H%M%S).log"
+    if [ -s "$RUN_DIR/frontend.pid" ] && kill -0 "$(cat "$RUN_DIR/frontend.pid")" 2>/dev/null; then
+        echo "Frontend already running (PID $(cat "$RUN_DIR/frontend.pid")). Run ./stop-frontend.sh first."
+        exit 1
+    fi
+    if ss -ltn 2>/dev/null | grep -q ":${FRONTEND_PORT} "; then
+        echo "Error: port $FRONTEND_PORT is already in use. Change FRONTEND_PORT in .env."
+        exit 1
+    fi
+    echo "Starting Frontend on $FRONTEND_HOST:$FRONTEND_PORT -> backend $BACKEND_URL..."
+    nohup uvicorn server:app --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --proxy-headers > "$log_file" 2>&1 &
+    echo $! > "$RUN_DIR/frontend.pid"
+    sleep 2
+    if ! kill -0 "$(cat "$RUN_DIR/frontend.pid")" 2>/dev/null; then
+        rm -f "$RUN_DIR/frontend.pid"
+        echo "ERROR: Frontend đã dừng ngay khi khởi động. Cuối log $log_file:"
+        tail -n 15 "$log_file"
+        exit 1
+    fi
+    echo "Frontend started. Log: $log_file. PID: $(cat "$RUN_DIR/frontend.pid")"
+}
+
+# Chạy
+echo "========================================"
+echo "  Starting Frontend"
+echo "========================================"
+
+start_frontend_server
+
+if ! curl -sf --max-time 3 "$BACKEND_URL/health" > /dev/null; then
+    echo "Warning: backend $BACKEND_URL chưa chạy (trang web vẫn mở được nhưng chưa xử lý được file)."
 fi
 
-echo "Frontend on http://$FRONTEND_HOST:$FRONTEND_PORT -> backend $BACKEND_URL"
-echo "Log: $LOG_FILE. Stop with ./stop-frontend.sh"
+echo ""
+echo "--------------------------------"
+echo "Trang web: http://<ip-máy>:$FRONTEND_PORT"
+echo ""
+echo "To stop the frontend, run:"
+echo "  ./stop-frontend.sh"
+echo "--------------------------------"

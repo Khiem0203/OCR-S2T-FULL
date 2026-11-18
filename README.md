@@ -19,6 +19,6 @@ cd ../frontend && ./start-frontend.sh   # trang web ở http://<ip-máy>:6767
 
 Dừng: `backend/stop-service.sh`, `frontend/stop-frontend.sh`.
 
-Môi trường Python (venv hoặc conda) đặt bằng `VENV_BIN` trong `backend/.env` và `frontend/.env`.
+Script tự kích hoạt Conda env theo `CONDA_PATH`, `CONDA_ENV_NAME` trong `backend/.env` và `frontend/.env`.
 
 API và worker phải chạy trên cùng máy (hoặc dùng chung ổ đĩa `UPLOAD_DIR`) vì file tải lên được lưu ra đĩa rồi worker đọc lại.

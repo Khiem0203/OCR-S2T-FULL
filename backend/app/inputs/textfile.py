@@ -50,6 +50,96 @@ def convert_tcvn3(text: str, assume: bool | None = None) -> str:
     )
 
 
+# Chấm text có ra tiếng Việt thật không: tỉ lệ từ là âm tiết hợp lệ
+
+_TONES = {"̀", "́", "̃", "̉", "̣"}
+_RHYMES = ("a|ă|â|e|ê|i|o|ô|ơ|u|ư|y|ai|ao|au|ay|âu|ây|eo|êu|ia|iê|iu|oa|oă|oe|oi|ôi|ơi|oo|ua|uâ|uê|ui|uô|uơ|uy"
+           "|ưa|ưi|ưu|ươ|iêu|oai|oay|oeo|uây|uôi|uya|uyê|uyu|ươi|ươu|yê|yêu")
+_SYLLABLE = re.compile(rf"^(ngh|ng|nh|ch|gh|gi|kh|ph|qu|th|tr|[bcdđghklmnprstvx])?({_RHYMES})(ch|ng|nh|[cmnpt])?$")
+_WORD = re.compile(r"[^\W\d_]+")
+VN_MIN_SCORE = 0.5
+# Chữ Latin-1 không có trong tiếng Việt: còn nhiều là phông cũ (TCVN3, VNI, VPS...) chưa đổi được
+_LEGACY_CHARS = ({chr(c) for c in range(0xC0, 0x100)} - set("ÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚÝàáâãèéêìíòóôõùúý×÷")) | TCVN3_MARKERS
+
+
+def _is_syllable(word: str) -> bool:
+    d = unicodedata.normalize("NFD", word.lower())
+    if sum(c in _TONES for c in d) > 1:
+        return False
+    return bool(_SYLLABLE.match(unicodedata.normalize("NFC", "".join(c for c in d if c not in _TONES))))
+
+
+def vn_score(text: str) -> float:
+    words = _WORD.findall(unicodedata.normalize("NFC", text))
+    return sum(map(_is_syllable, words)) / len(words) if words else 0.0
+
+
+# Bảng mã VNI-Windows: chữ gốc + ký tự dấu đứng sau ('HÖÔÙNG DAÃN' = 'HƯỚNG DẪN', 'ñ' = 'đ')
+
+_VNI_TONES = ("́", "̀", "̉", "̃", "̣")  # sắc, huyền, hỏi, ngã, nặng
+
+
+def _vni_map() -> dict:
+    m = {}
+
+    # base: chữ gốc VNI; hat: ký tự mũ / trăng; marks: ký tự dấu theo thứ tự sắc, huyền, hỏi, ngã, nặng
+    def add(base, char, marks, hat=""):
+        for b, c, k, h in ((base, char, marks, hat), (base.upper(), char.upper(), marks.upper(), hat.upper()),
+                           (base.upper(), char.upper(), marks, hat)):  # chữ hoa đầu từ, dấu viết thường
+            if b + h != c:
+                m[b + h] = c
+            for mark, tone in zip(k, _VNI_TONES):
+                m[b + mark] = unicodedata.normalize("NFC", c + tone)
+
+    for v in "aeou":
+        add(v, v, "ùøûõï")
+    add("y", "y", "ùøûõ")
+    add("a", "â", "áàåãä", "â")
+    add("e", "ê", "áàåãä", "â")
+    add("o", "ô", "áàåãä", "â")
+    add("a", "ă", "éèúüë", "ê")
+    add("ô", "ơ", "ùøûõï")
+    add("ö", "ư", "ùøûõï")
+    m.update({"ñ": "đ", "Ñ": "Đ", "æ": "ỉ", "Æ": "Ỉ", "ó": "ĩ", "Ó": "Ĩ", "ò": "ị", "Ò": "Ị", "î": "ỵ", "Î": "Ỵ"})
+    return m
+
+
+VNI_MAP = _vni_map()
+_VNI_RE = re.compile("|".join(map(re.escape, sorted(VNI_MAP, key=len, reverse=True))))
+
+
+def convert_vni(text: str) -> str:
+    """Đổi VNI sang Unicode; giữ nguyên dòng đã có chữ Unicode tiếng Việt."""
+    return "\n".join(
+        line if _VN_UNICODE.search(line) else _VNI_RE.sub(lambda x: VNI_MAP[x.group(0)], line)
+        for line in text.split("\n")
+    )
+
+
+def pick_legacy(text: str):
+    """Cách đổi phông cũ (TCVN3 hoặc VNI) ra tiếng Việt thật nhất; None nếu text đã ổn.
+
+    Chỉ nhận khi bản đổi đạt VN_MIN_SCORE và hơn bản gốc, để không làm hỏng text Unicode
+    hay text mã khác (VPS, VietWare) bị nhận nhầm.
+    """
+    if not text:
+        return None
+    best, best_score, base = None, 0.0, vn_score(text)
+    for fn in (lambda t: convert_tcvn3(t, assume=True), convert_vni):
+        out = fn(text)
+        if out == text:
+            continue
+        score = vn_score(out)
+        if score >= VN_MIN_SCORE and score > base and score > best_score:
+            best, best_score = fn, score
+    return best
+
+
+def fix_legacy(text: str) -> str:
+    fn = pick_legacy(text)
+    return fn(text) if fn else text
+
+
 def quality_problem(pages: list[str]) -> str:
     """Lý do không dùng được; rỗng nếu dùng được."""
     text = "\n".join(pages)
@@ -59,9 +149,10 @@ def quality_problem(pages: list[str]) -> str:
     letters = sum(c.isalpha() for c in text)
     if letters / visible < 0.5:
         return f"chỉ {letters / visible:.0%} ký tự là chữ cái, nghi lỗi mã hoá"
-    leftover = sum(c in TCVN3_MARKERS for c in text)
-    if leftover >= 3 and letters and leftover / letters >= 0.02:
-        return f"còn {leftover} ký tự TCVN3 chưa đổi được"
+    leftover, score = sum(c in _LEGACY_CHARS for c in text), vn_score(text)
+    if leftover >= 3 and letters and leftover / letters >= 0.02 and score < VN_MIN_SCORE:
+        return (f"còn {leftover} ký tự lạ, chỉ {score:.0%} âm tiết tiếng Việt hợp lệ, "
+                f"nghi phông cũ (TCVN3 / VNI / VPS...) chưa đổi được")
     return ""
 
 
@@ -176,8 +267,9 @@ def read_docx(path: str | Path) -> list[str]:
         if mode == "after" or _section_break(el, qn):
             flush()
     flush()
-    assume = looks_like_tcvn3("\n".join(pages))
-    return [convert_tcvn3(p, assume=assume) for p in pages]
+    # Phông cũ: chọn bảng mã theo cả file, đổi từng trang
+    fn = pick_legacy("\n".join(pages))
+    return [fn(p) for p in pages] if fn else pages
 
 
 # doc, odt, rtf
@@ -249,7 +341,7 @@ def read_text_file(path: str | Path, page_chars: int = 3000) -> tuple[list[str],
                 text = read_with_tools(path)
                 if not text.strip():
                     return [], "không đọc được (cần antiword, catdoc hoặc LibreOffice trên server)"
-            text = unicodedata.normalize("NFC", convert_tcvn3(text.replace("\r\n", "\n").replace("\r", "\n")))
+            text = unicodedata.normalize("NFC", fix_legacy(text.replace("\r\n", "\n").replace("\r", "\n")))
             # \f là ngắt trang
             pages = [p.strip() for p in text.split("\f")]
         pages = [clean(p) for p in pages if p.strip()]

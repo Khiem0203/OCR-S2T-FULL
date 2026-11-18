@@ -413,15 +413,15 @@ Cần RabbitMQ, PostgreSQL, Chandra (vLLM) và ProtonX chạy sẵn (hoặc đ�
 RabbitMQ và PostgreSQL có thể bật bằng `docker compose up -d` (`docker-compose.yaml`; điền user/mật khẩu khớp
 `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, rồi tạo thêm database `POSTGRES_DB` cho kết quả):
 ```bash
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
+conda create -n your_conda_env python=3.11 && conda activate your_conda_env && pip install -r requirements.txt
 sudo apt install antiword catdoc libreoffice-writer-nogui   # đọc .doc / .odt / .rtf
 sudo apt install ffmpeg                                      # giải mã âm thanh cho speech-to-text
 # Sửa .env: điền API_KEYS, CELERY_BROKER_URL, CELERY_RESULT_BACKEND, POSTGRES_*; sửa CHANDRA_URL, SPELLFIX_API_URL
 python -c "import secrets; print(secrets.token_urlsafe(32))"   # dùng để tạo khóa/mật khẩu (an toàn cho URL)
-VENV_BIN=$PWD/.venv/bin ./start-service.sh   # hoặc ghi VENV_BIN trong .env, vd conda: /path/to/anaconda3/envs/<env>/bin
-# ProtonX trong cùng venv: .venv/bin/pip install -r requirements-spellfix.txt, rồi START_SPELLFIX=true (nghe 127.0.0.1:8006)
-# Chandra trong cùng venv (cần vllm): START_CHANDRA=true (nghe 127.0.0.1:CHANDRA_PORT)
-# PhoWhisper trong cùng venv (cần pip install "vllm[audio]"): START_PHOWHISPER=true (nghe 127.0.0.1:PHOWHISPER_PORT)
+./start-service.sh   # tự kích hoạt Conda env CONDA_ENV_NAME (CONDA_PATH) trong .env
+# ProtonX trong cùng env: pip install -r requirements-spellfix.txt, rồi START_SPELLFIX=true (nghe 127.0.0.1:SPELLFIX_PORT)
+# Chandra trong cùng env (cần vllm): START_CHANDRA=true (nghe 127.0.0.1:CHANDRA_PORT)
+# PhoWhisper trong cùng env (cần pip install "vllm[audio]"): START_PHOWHISPER=true (nghe 127.0.0.1:PHOWHISPER_PORT)
 ./stop-service.sh
 ```
 Chọn card GPU (số thứ tự trong `nvidia-smi`, vd `0`, `1` hoặc `0,1`): ProtonX bằng `SPELLFIX_CUDA_DEVICE` trong `.env`; Chandra và PhoWhisper bằng `CUDA_VISIBLE_DEVICES` trong file service.
@@ -431,12 +431,15 @@ Chỉ khi bật model bằng `start-service.sh` (`START_CHANDRA=true`, `START_PH
 tham số vLLM (không có thì script dùng mặc định); ví dụ với Chandra: `CHANDRA_PORT`, `CHANDRA_MAX_MODEL_LEN`, `CHANDRA_GPU_MEMORY_UTILIZATION`,
 `CHANDRA_MAX_NUM_BATCHED_TOKENS`, `CHANDRA_MAX_NUM_SEQS`, `CHANDRA_PREFIX_CACHING`, `CHANDRA_VLLM_EXTRA_ARGS` (cờ khác); đặt `CHANDRA_API_KEY`
 thì vLLM bắt buộc khóa đó và worker tự gửi kèm.
-Chạy bằng đúng user sở hữu thư mục dự án (script sẽ báo lỗi rõ ràng nếu `logs/` hoặc `temp_processing/` không ghi được).
+Model bật bằng `start-service.sh` chạy trước API: nếu cổng đã có service khác (vd đang chạy bằng systemd) thì bỏ qua,
+không thì bật và chờ `/health` tối đa `SPELLFIX_WAIT` (180), `CHANDRA_WAIT` (600), `PHOWHISPER_WAIT` (300) giây. Log model ở
+`logs/services/`, PID ở `run/`; `stop-service.sh` chỉ dừng những gì `start-service.sh` đã bật.
+Chạy bằng đúng user sở hữu thư mục dự án.
 Mẫu systemd (giá trị cố định):
 
 | File | Chạy |
 |---|---|
-| `service/ocr-fullpage.service` | `start-service.sh` / `stop-service.sh` trong `/path/to/ocr-toanvan/backend`, user `your_user`, `VENV_BIN` `/path/to/python-env/bin` |
+| `service/ocr-fullpage.service` | `start-service.sh` / `stop-service.sh` trong `/path/to/ocr-toanvan/backend`, user `your_user` (Conda env lấy từ `.env`) |
 | `service/vllm-chandra.service` | Chandra (`CHANDRA_MODEL`), GPU 0, cổng 8101, max-model-len 8192, VRAM 0.6, batched tokens 9216, 8 seqs, prefix caching |
 | `service/vllm-phowhisper.service` | PhoWhisper (`PHOWHISPER_MODEL`), GPU 0, cổng 8120, fp16 (khoảng 3 GB VRAM), VRAM 0.5, 64 seqs |
 

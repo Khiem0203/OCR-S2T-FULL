@@ -221,4 +221,7 @@ class SpellChecker:
                 corrections.append({"line": ln + 1, "wrong": tok.text, "right": new, "by": by})
             lines[ln] = line
         corrections.sort(key=lambda c: c["line"])
+        if corrections:
+            log.info("sửa %d chỗ: %s", len(corrections),
+                     "; ".join(f"dòng {c['line']}: {c['wrong']} -> {c['right']} ({c['by']})" for c in corrections))
         return "\n".join(lines), corrections

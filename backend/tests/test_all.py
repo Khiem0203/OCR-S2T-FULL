@@ -674,6 +674,21 @@ class InputFiles(unittest.TestCase):
             path.write_bytes(data)
             self.assertEqual(read_text_file(path), (["Việc thực hiện"], ""))
 
+    def test_vni_text_is_converted_and_unicode_left_alone(self):
+        from app.inputs.textfile import fix_legacy, quality_problem, read_text_file
+
+        # VNI-Windows
+        self.assertEqual(fix_legacy("HÖÔÙNG DAÃN thöïc hieän nghò quyeát"), "HƯỚNG DẪN thực hiện nghị quyết")
+        path = Path(os.environ["TEMP_DIR"]) / "vni.docx"
+        path.write_bytes(make_docx(["Vieäc thöïc hieän"], ["Ñaûng boä tænh"]))
+        self.assertEqual(read_text_file(path), (["Việc thực hiện", "Đảng bộ tỉnh"], ""))
+        # Unicode có á, ò... không bị đổi nhầm
+        for text in ("bà má có lá cờ", "Việc thực hiện nghị quyết", "Report of the board"):
+            self.assertEqual(fix_legacy(text), text)
+        # Mã khác không đổi được thì báo lỗi, không dùng
+        self.assertIn("phông cũ", quality_problem(["Ìþ ßÿ Ýþð ÐÞ Ïþü ÞÐ Ìÿ ÞÿÐ"]))
+        self.assertEqual(quality_problem(["Việc thực hiện nghị quyết"]), "")
+
     def test_long_text_without_page_breaks_is_split_on_lines(self):
         from app.inputs.textfile import read_text_file
 

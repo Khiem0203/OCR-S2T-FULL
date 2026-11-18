@@ -8,7 +8,6 @@ RemainAfterExit=yes
 User=your_user
 Group=your_group
 WorkingDirectory=/path/to/ocr-toanvan/backend
-Environment=VENV_BIN=/path/to/python-env/bin
 ExecStart=/bin/bash /path/to/ocr-toanvan/backend/start-service.sh
 ExecStop=/bin/bash /path/to/ocr-toanvan/backend/stop-service.sh
 TimeoutStopSec=90
