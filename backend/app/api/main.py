@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Requ
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from ..clients.webhook import webhook_allowed
 from ..config import Settings, load_settings
@@ -39,8 +40,8 @@ log = logging.getLogger("ocr.api")
 
 def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None = None) -> FastAPI:
     settings = settings or load_settings()
-    if not settings.api_keys and not settings.auth_disabled:
-        raise RuntimeError("API_KEYS is empty. Set API_KEYS (comma separated) or AUTH_DISABLED=true for local use.")
+    if not (settings.api_username and settings.api_password) and not settings.auth_disabled:
+        raise RuntimeError("API_USERNAME / API_PASSWORD are empty. Set them in .env or AUTH_DISABLED=true for local use.")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -71,22 +72,25 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
     if settings.cors_origins:
         app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_methods=["POST", "GET"], allow_headers=["*"])
 
-    def require_key(request: Request) -> None:
+    # Tên đăng nhập + mật khẩu (HTTP Basic); Swagger /docs có nút Authorize
+    basic = HTTPBasic(auto_error=False, description="Tên đăng nhập và mật khẩu (API_USERNAME / API_PASSWORD)")
+
+    def require_login(creds: HTTPBasicCredentials | None = Depends(basic)) -> None:
         if settings.auth_disabled:
             return
-        supplied = request.headers.get("x-api-key", "")
-        if not supplied:
-            auth = request.headers.get("authorization", "")
-            if auth.lower().startswith("bearer "):
-                supplied = auth[7:].strip()
-        if not any(secrets.compare_digest(supplied.encode(), k.encode()) for k in settings.api_keys):
-            raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
+        user = creds.username if creds else ""
+        password = creds.password if creds else ""
+        # So cả hai để thời gian trả lời không lộ trường nào sai
+        user_ok = secrets.compare_digest(user.encode(), settings.api_username.encode())
+        password_ok = secrets.compare_digest(password.encode(), settings.api_password.encode())
+        if not (creds and user_ok and password_ok):
+            raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": 'Basic realm="ocr"'})
 
     @app.get("/health")
     async def health():
         return {"status": "ok"}
 
-    api = APIRouter(prefix="/api", dependencies=[Depends(require_key)])
+    api = APIRouter(prefix="/api", dependencies=[Depends(require_login)])
 
     async def queue_job(req: FullPageRequest, submit, kind: str) -> str:
         """Kiểm tra request rồi đưa vào hàng đợi; trả request_id."""

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import unittest
@@ -299,7 +300,8 @@ class Mocks:
 
 def make_settings(**overrides) -> Settings:
     return Settings(
-        api_keys=frozenset({"secret-key-123"}),
+        api_username="tester",
+        api_password="secret-pass-123",
         chandra_url="http://chandra/v1/chat/completions",
         spellfix_url="http://spellfix/spellfix/correct",
         phowhisper_url="http://phowhisper/v1/audio/transcriptions",
@@ -313,7 +315,7 @@ def make_client(mocks: Mocks, **overrides):
     return TestClient(app)
 
 
-KEY = {"X-API-Key": "secret-key-123"}
+KEY = {"Authorization": "Basic " + base64.b64encode(b"tester:secret-pass-123").decode()}
 
 
 class SyncApi(unittest.TestCase):
@@ -355,8 +357,13 @@ class SyncApi(unittest.TestCase):
         with make_client(Mocks()) as client:
             files = {"file": ("a.pdf", make_pdf(), "application/pdf")}
             self.assertEqual(client.post("/api/ocr-fullpage/sync", files=files).status_code, 401)
-            self.assertEqual(client.post("/api/ocr-fullpage/sync", headers={"X-API-Key": "wrong"}, files=files).status_code, 401)
-            ok = client.post("/api/ocr-fullpage/sync", headers={"Authorization": "Bearer secret-key-123"}, files=files)
+            denied = client.post("/api/ocr-fullpage/sync", files=files)
+            self.assertTrue(denied.headers["www-authenticate"].startswith("Basic"))
+            for user, pw in (("tester", "wrong"), ("other", "secret-pass-123"), ("", "")):
+                bad = {"Authorization": "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()}
+                self.assertEqual(client.post("/api/ocr-fullpage/sync", headers=bad, files=files).status_code, 401)
+            self.assertEqual(client.post("/api/ocr-fullpage/sync", headers={"X-API-Key": "secret-pass-123"}, files=files).status_code, 401)
+            ok = client.post("/api/ocr-fullpage/sync", auth=("tester", "secret-pass-123"), files=files)
             self.assertEqual(ok.status_code, 200)
             self.assertEqual(client.get("/health").json(), {"status": "ok"})
             self.assertEqual(client.get("/docs").status_code, 404)
@@ -1469,13 +1476,15 @@ class BookMetadata(unittest.TestCase):
 
 
 class Config(unittest.TestCase):
-    def test_refuses_to_start_without_api_keys(self):
+    def test_refuses_to_start_without_login(self):
         with self.assertRaises(RuntimeError):
             create_app(Settings())
+        with self.assertRaises(RuntimeError):
+            create_app(Settings(api_username="admin"))
 
     def test_secrets_are_not_in_repr(self):
         s = Settings(
-            api_keys=frozenset({"k1secret"}), chandra_api_key="t1secret",
+            api_username="admin", api_password="k1secret", chandra_api_key="t1secret",
             broker_url="amqp://u:p3secret@h//", result_backend="db+postgresql://u:p4secret@h/db",
             pg_password="p5secret", flower_auth="u:p6secret", s3_access_key="p7secret", s3_secret_key="p8secret",
         )

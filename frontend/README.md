@@ -7,9 +7,6 @@ Trang web thuần HTML/CSS/JS (không cần build, không tải gì từ CDN) c�
 
 ```
 public/
-├── index.html   khung trang
-├── style.css    giao diện (tự sáng/tối theo máy)
-└── app.js       chọn file, tải lên, theo dõi việc, xem kết quả
 server.py        trang tĩnh + chuyển tiếp /api sang BACKEND_URL
 start-frontend.sh  bật chạy nền (log ở logs/, pid ở run/)
 stop-frontend.sh   dừng
@@ -44,7 +41,8 @@ Nhớ mở cổng trên tường lửa nếu cần, ví dụ `sudo ufw allow 676
 
 ## Dùng
 
-1. Nhập **API key** (một khóa trong `API_KEYS` của backend; lưu trên trình duyệt). Chấm xanh cạnh ô là backend đang chạy.
+1. Nhập **tên đăng nhập** và **mật khẩu** (`API_USERNAME` / `API_PASSWORD` của backend) ở góc trên. Tên đăng nhập được nhớ
+   trên trình duyệt; mật khẩu chỉ nhớ trong phiên (đóng tab phải nhập lại). Chấm xanh cạnh ô là backend đang chạy.
 2. Chọn tab **OCR tài liệu**, **Trích xuất lời nói** hoặc **Metadata sách** (thông tin xuất bản ở trang cuối; mặc định cả lô là một cuốn).
 3. Chọn file bằng **Chọn file** (chọn được nhiều file), **Chọn thư mục** (lấy mọi file trong thư mục và thư mục con),
    hoặc **kéo thả** file / thư mục vào khung. File không hỗ trợ bị bỏ qua và liệt kê ra.
@@ -60,5 +58,17 @@ Nhớ mở cổng trên tường lửa nếu cần, ví dụ `sudo ufw allow 676
    - **Từ lạ**: từ không có trong từ điển, kèm ngữ cảnh.
    - **Đầu vào**: file đã dùng, file bị bỏ qua, lý do bỏ lớp text PDF.
    - **Tải .txt**: tải văn bản về máy.
+
+## Thử API (kiểu Swagger)
+
+Mở `http://<máy>:6767/api.html` (hoặc nút **Thử API** ở góc trên trang chính). Trang liệt kê mọi API của backend theo nhóm:
+
+- Bấm một API để mở: điền tham số đường dẫn và query, sửa body JSON (có sẵn mẫu), hoặc chọn file với API tải lên.
+- **Gửi**: gọi API thật qua frontend, kèm tên đăng nhập và mật khẩu ở góc trên (dùng chung với trang chính).
+- Kết quả hiện mã HTTP, thời gian, dung lượng, JSON tô màu; có nút chép, tải JSON, và lệnh `curl` tương ứng (đăng nhập ghi là `-u "$API_USERNAME:$API_PASSWORD"`, không lộ mật khẩu).
+- `request_id` nhận được từ API gửi việc tự điền vào các API cần nó. API `request-status` có ô tự hỏi lại mỗi 4 giây đến khi xong.
+- Ô lọc tìm API theo đường dẫn hoặc mô tả.
+
+Khác Swagger ở `:9090/docs`: trang này chạy qua frontend nên không cần mở cổng 9090, có sẵn mẫu body và tự điền `request_id`.
 
 Kết quả lấy từ `/api/request-status/{id}` (lưu trong Celery tối đa `RESULT_EXPIRES` giây); danh sách việc lưu trên trình duyệt.

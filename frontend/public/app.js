@@ -68,8 +68,7 @@ function clock(sec) {
   return [Math.floor(s / 3600), Math.floor(s % 3600 / 60), s % 60].map((x) => String(x).padStart(2, "0")).join(":");
 }
 function headers() {
-  const key = $("apiKey").value.trim();
-  return key ? { "X-API-Key": key } : {};
+  return window.authHeaders();
 }
 async function api(path) {
   const r = await fetch(path, { headers: headers() });
@@ -80,8 +79,6 @@ async function api(path) {
 
 // Kết nối
 
-$("apiKey").value = load("apiKey", "");
-$("apiKey").addEventListener("change", () => save("apiKey", $("apiKey").value.trim()));
 
 async function checkHealth() {
   try {
@@ -206,7 +203,7 @@ $("submit").addEventListener("click", () => {
     let body = {};
     try { body = JSON.parse(xhr.responseText); } catch { /* bỏ qua */ }
     if (xhr.status !== 202) {
-      showError(xhr.status === 401 ? "Sai hoặc thiếu API key." : `Lỗi ${xhr.status}: ${JSON.stringify(body.detail ?? xhr.responseText)}`);
+      showError(xhr.status === 401 ? "Sai hoặc thiếu tên đăng nhập / mật khẩu." : `Lỗi ${xhr.status}: ${JSON.stringify(body.detail ?? xhr.responseText)}`);
       return;
     }
     for (const job of body.jobs) {

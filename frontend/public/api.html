@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thử API</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="api.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◧</span>
+      <div>
+        <h1>Thử API</h1>
+        <p class="sub">Gửi request thật tới backend, xem JSON trả về</p>
+      </div>
+    </div>
+    <div class="conn">
+      <a class="btn" href="index.html">← Trang xử lý file</a>
+      <span id="health" class="dot" title="Trạng thái backend"></span>
+      <label class="key">
+        <span>Đăng nhập</span>
+        <input id="apiUser" type="text" placeholder="Tên đăng nhập" autocomplete="username">
+      </label>
+      <label class="key">
+        <input id="apiPass" type="password" placeholder="Mật khẩu" autocomplete="current-password" aria-label="Mật khẩu">
+      </label>
+    </div>
+  </header>
+
+  <main class="apidoc">
+    <section class="card intro">
+      <p>
+        Mọi request đi qua frontend tới backend (<code>/api/...</code>) và gửi kèm tên đăng nhập, mật khẩu
+        ở góc trên (header <code>Authorization: Basic</code>).
+      </p>
+      <p class="muted">
+        Bấm vào một API để mở. Sửa tham số hoặc body rồi bấm <strong>Gửi</strong>.
+        <code>request_id</code> nhận được từ các API gửi việc sẽ tự điền vào các API cần nó.
+      </p>
+      <div class="filter-row">
+        <input id="filter" type="text" placeholder="Lọc API theo đường dẫn hoặc mô tả...">
+        <button id="expandAll" class="link">Mở tất cả</button>
+        <button id="collapseAll" class="link">Đóng tất cả</button>
+      </div>
+      <p class="last-id">request_id gần nhất: <code id="lastId">—</code></p>
+    </section>
+
+    <div id="groups"></div>
+  </main>
+
+  <script src="auth.js"></script>
+  <script src="api.js"></script>
+</body>
+</html>

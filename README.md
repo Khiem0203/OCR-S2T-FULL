@@ -2,6 +2,7 @@
 
 | Thư mục | Nội dung |
 |---|---|
+| [`API.md`](API.md) | Hướng dẫn gọi API cho front-end / hệ thống khác: JSON gửi lên và JSON nhận về của từng API |
 | [`backend/`](backend/README.md) | API FastAPI + worker Celery: OCR (Chandra), chép lời (PhoWhisper), metadata sách (trang cuối), sửa chính tả (ProtonX + từ điển), PostgreSQL, webhook |
 | [`frontend/`](frontend/README.md) | Trang web tải file lên từ máy (nhiều file hoặc cả thư mục), theo dõi việc, xem kết quả và chỗ đã sửa (web mang mục đích demo) |
 

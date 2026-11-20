@@ -16,10 +16,14 @@
       </div>
     </div>
     <div class="conn">
+      <a class="btn" href="api.html">Thử API</a>
       <span id="health" class="dot" title="Trạng thái backend"></span>
       <label class="key">
-        <span>API key</span>
-        <input id="apiKey" type="password" placeholder="Nhập API key" autocomplete="off">
+        <span>Đăng nhập</span>
+        <input id="apiUser" type="text" placeholder="Tên đăng nhập" autocomplete="username">
+      </label>
+      <label class="key">
+        <input id="apiPass" type="password" placeholder="Mật khẩu" autocomplete="current-password" aria-label="Mật khẩu">
       </label>
     </div>
   </header>
@@ -93,6 +97,7 @@
     </section>
   </main>
 
+  <script src="auth.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

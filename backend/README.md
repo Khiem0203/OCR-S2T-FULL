@@ -76,7 +76,10 @@ app/
 
 ## API
 
-Mọi endpoint `/api/*` cần khóa: `X-API-Key: <khóa>` hoặc `Authorization: Bearer <khóa>`. `/health` không cần khóa.
+Mọi endpoint `/api/*` cần đăng nhập bằng tên và mật khẩu (HTTP Basic, `API_USERNAME` / `API_PASSWORD` trong `.env`):
+`curl -u "$API_USERNAME:$API_PASSWORD" ...` hoặc header `Authorization: Basic <base64 của "tên:mật_khẩu">`.
+Sai hoặc thiếu thì trả `401`. `/health` không cần đăng nhập. Mật khẩu chỉ dùng ký tự không dấu (ASCII).
+Swagger `/docs` (khi `ENABLE_DOCS=true`) có nút **Authorize** để nhập tên và mật khẩu.
 
 | Endpoint | Mô tả |
 |---|---|
@@ -99,7 +102,7 @@ Mọi endpoint `/api/*` cần khóa: `X-API-Key: <khóa>` hoặc `Authorization:
 | `GET /health` | Kiểm tra sống. |
 
 ```bash
-curl -H "X-API-Key: $KEY" -H "Content-Type: application/json" localhost:9090/api/ocr-fullpage -d '{
+curl -u "$API_USERNAME:$API_PASSWORD" -H "Content-Type: application/json" localhost:9090/api/ocr-fullpage -d '{
   "s3_path": "s3://bucket/thu-muc/hoso.pdf",
   "access_key": "...", "secret_key": "...", "endpoint": "http://minio:9000",
   "callback_url": "https://noi-nhan-ket-qua.example/hook",
@@ -107,7 +110,7 @@ curl -H "X-API-Key: $KEY" -H "Content-Type: application/json" localhost:9090/api
 }'
 # → {"error_code":202,"error_message":"...","request_id":"3f2a..."}
 
-curl -H "X-API-Key: $KEY" -F file=@hoso.pdf localhost:9090/api/ocr-fullpage/sync
+curl -u "$API_USERNAME:$API_PASSWORD" -F file=@hoso.pdf localhost:9090/api/ocr-fullpage/sync
 ```
 `access_key`, `secret_key`, `endpoint` có thể bỏ; khi đó dùng `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_ENDPOINT` trong `.env`.
 
@@ -206,11 +209,11 @@ Thay cho S3: frontend (thư mục `../frontend`) gửi file lên đây. File đ�
 
 ```bash
 # Nhiều file, mỗi file một việc
-curl -H "X-API-Key: $KEY" -F files=@a.pdf -F files=@b.docx localhost:9090/api/uploads/ocr
+curl -u "$API_USERNAME:$API_PASSWORD" -F files=@a.pdf -F files=@b.docx localhost:9090/api/uploads/ocr
 # Cả thư mục ảnh là một tài liệu (ảnh là các trang theo tên)
-curl -H "X-API-Key: $KEY" -F group=true $(for f in scan/*.jpg; do printf -- '-F files=@%s ' "$f"; done) localhost:9090/api/uploads/ocr
+curl -u "$API_USERNAME:$API_PASSWORD" -F group=true $(for f in scan/*.jpg; do printf -- '-F files=@%s ' "$f"; done) localhost:9090/api/uploads/ocr
 # Chép lời, nối các file theo tên
-curl -H "X-API-Key: $KEY" -F group=true -F files=@phan1.m4a -F files=@phan2.m4a localhost:9090/api/uploads/speech
+curl -u "$API_USERNAME:$API_PASSWORD" -F group=true -F files=@phan1.m4a -F files=@phan2.m4a localhost:9090/api/uploads/speech
 # → 202 {"jobs": [{"request_id": "3f2a...", "files": ["phan1.m4a", "phan2.m4a"]}], "skipped": []}
 ```
 
@@ -227,7 +230,7 @@ API và worker phải dùng chung ổ đĩa `UPLOAD_DIR` (cùng máy là đủ).
 ## API cho web
 
 Đọc kết quả đã lưu trong PostgreSQL (`POSTGRES_*`; chưa cấu hình thì trả `503`). `{id}` là `request_id`.
-Cần API key như các endpoint khác: web nên gọi qua backend của mình, không để key trong trình duyệt; nếu gọi thẳng thì đặt `CORS_ORIGINS`.
+Cần đăng nhập như các endpoint khác: web nên gọi qua backend của mình, không để mật khẩu trong mã trang; nếu gọi thẳng thì đặt `CORS_ORIGINS`.
 
 **`GET /api/documents?limit=20&offset=0&document_id=42`** — danh sách, mới nhất trước:
 ```json
@@ -273,11 +276,11 @@ bằng ProtonX + 3 bộ từ điển như OCR. Nhận `mp3, m4a, m4b, aac, wav, 
 `mp4, webm, mkv, mov` (lấy tiếng).
 
 ```bash
-curl -H "X-API-Key: $KEY" -H "Content-Type: application/json" localhost:9090/api/speech-to-text -d '{
+curl -u "$API_USERNAME:$API_PASSWORD" -H "Content-Type: application/json" localhost:9090/api/speech-to-text -d '{
   "s3_path": "s3://bucket/ghi-am/hop-ngay-03.m4a",
   "callback_url": "https://noi-nhan-ket-qua.example/hook", "document_id": 12345
 }'
-curl -H "X-API-Key: $KEY" -F file=@hop.m4a localhost:9090/api/speech-to-text/sync
+curl -u "$API_USERNAME:$API_PASSWORD" -F file=@hop.m4a localhost:9090/api/speech-to-text/sync
 ```
 `s3_path` là một file, hoặc một thư mục (kết thúc bằng `/`): mọi file âm thanh trong thư mục, xử lý theo tên (`phan2` trước `phan10`).
 Khóa S3 có thể bỏ, giống OCR. Trạng thái xem ở `GET /api/request-status/{id}` như OCR.
@@ -416,7 +419,7 @@ RabbitMQ và PostgreSQL có thể bật bằng `docker compose up -d` (`docker-c
 conda create -n your_conda_env python=3.11 && conda activate your_conda_env && pip install -r requirements.txt
 sudo apt install antiword catdoc libreoffice-writer-nogui   # đọc .doc / .odt / .rtf
 sudo apt install ffmpeg                                      # giải mã âm thanh cho speech-to-text
-# Sửa .env: điền API_KEYS, CELERY_BROKER_URL, CELERY_RESULT_BACKEND, POSTGRES_*; sửa CHANDRA_URL, SPELLFIX_API_URL
+# Sửa .env: điền API_USERNAME, API_PASSWORD, CELERY_BROKER_URL, CELERY_RESULT_BACKEND, POSTGRES_*; sửa CHANDRA_URL, SPELLFIX_API_URL
 python -c "import secrets; print(secrets.token_urlsafe(32))"   # dùng để tạo khóa/mật khẩu (an toàn cho URL)
 ./start-service.sh   # tự kích hoạt Conda env CONDA_ENV (tên hoặc đường dẫn env) trong .env
 # ProtonX trong cùng env: pip install -r requirements-spellfix.txt, rồi START_SPELLFIX=true (nghe 127.0.0.1:SPELLFIX_PORT)
@@ -453,7 +456,7 @@ RabbitMQ, PostgreSQL và Flower nên chỉ nghe `127.0.0.1` (Flower do `start-se
 ## Bảo mật
 
 - Không có mật khẩu/khóa nào trong mã nguồn; tất cả đọc từ biến môi trường. Không đưa `.env` vào git (chứa mật khẩu).
-  Thiếu `API_KEYS` thì dịch vụ từ chối khởi động (trừ khi `AUTH_DISABLED=true`, chỉ dùng khi phát triển).
+  Thiếu `API_USERNAME` hoặc `API_PASSWORD` thì dịch vụ từ chối khởi động (trừ khi `AUTH_DISABLED=true`, chỉ dùng khi phát triển).
 - Khóa MinIO/S3 lấy từ request, thiếu thì lấy `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` trong `.env` (khóa trong `.env` không đi qua RabbitMQ).
   Chỉ dùng để tải file, không lưu vào DB, không ghi log, không trả lại trong phản hồi/lỗi 422.
   Lưu ý: khóa gửi trong request nằm trong thông điệp RabbitMQ của tác vụ đầu tiên và **Flower hiển thị tham số tác vụ** — luôn đặt `FLOWER_BASIC_AUTH`

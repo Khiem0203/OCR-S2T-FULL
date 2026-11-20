@@ -47,7 +47,8 @@ def _path(name: str, default: str = "") -> str:
 @dataclass(frozen=True)
 class Settings:
     # repr=False: không in khóa ra log
-    api_keys: frozenset = field(default=frozenset(), repr=False)
+    api_username: str = ""
+    api_password: str = field(default="", repr=False)
     chandra_api_key: str = field(default="", repr=False)
     phowhisper_api_key: str = field(default="", repr=False)
     broker_url: str = field(default="", repr=False)
@@ -162,7 +163,8 @@ def load_settings() -> Settings:
     if bad:
         raise ValueError(f"UNKNOWN_INCLUDE has unknown kinds: {sorted(bad)}")
     return Settings(
-        api_keys=frozenset(k.strip() for k in _str("API_KEYS").split(",") if k.strip()),
+        api_username=_str("API_USERNAME"),
+        api_password=_str("API_PASSWORD"),
         chandra_api_key=_str("CHANDRA_API_KEY"),
         phowhisper_api_key=_str("PHOWHISPER_API_KEY"),
         broker_url=_str("CELERY_BROKER_URL"),

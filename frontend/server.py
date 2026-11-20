@@ -15,6 +15,7 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:9090").rstrip("/")
 PUBLIC = Path(__file__).resolve().parent / "public"
 # Header không chuyển tiếp
 HOP = {"host", "connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization"}
+# Không trả WWW-Authenticate về trình duyệt: tránh hộp đăng nhập mặc định bật lên, trang tự báo lỗi 401
 
 # Không giới hạn thời gian đọc (upload lớn)
 client = httpx.AsyncClient(base_url=BACKEND_URL, timeout=httpx.Timeout(None, connect=10))
@@ -28,7 +29,7 @@ async def proxy(request: Request):
         resp = await client.send(req, stream=True)
     except httpx.TransportError:
         return JSONResponse({"detail": f"Không kết nối được backend ({BACKEND_URL})"}, status_code=502)
-    out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in HOP}
+    out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in HOP and k.lower() != "www-authenticate"}
     return StreamingResponse(resp.aiter_raw(), status_code=resp.status_code, headers=out_headers,
                              background=BackgroundTask(resp.aclose))
 

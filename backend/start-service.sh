@@ -124,8 +124,8 @@ cd "$PROJECT_DIR" || { echo "Error: Could not change to project directory $PROJE
 # Kiểm tra cấu hình
 [ -n "$CELERY_BROKER_URL" ]     || { echo "Error: CELERY_BROKER_URL is not set in .env"; exit 1; }
 [ -n "$CELERY_RESULT_BACKEND" ] || { echo "Error: CELERY_RESULT_BACKEND is not set in .env"; exit 1; }
-if [ -z "$API_KEYS" ] && [ "$AUTH_DISABLED" != "true" ]; then
-    echo "Error: API_KEYS is not set (or set AUTH_DISABLED=true for local use)"; exit 1
+if { [ -z "$API_USERNAME" ] || [ -z "$API_PASSWORD" ]; } && [ "$AUTH_DISABLED" != "true" ]; then
+    echo "Error: API_USERNAME / API_PASSWORD are not set (or set AUTH_DISABLED=true for local use)"; exit 1
 fi
 UVICORN="$ENV_BIN/uvicorn"
 CELERY="$ENV_BIN/celery"
