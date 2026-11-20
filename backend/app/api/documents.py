@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ..config import Settings
 from ..storage import db
+from .export import build_file
 
 
 def _counts(doc: dict) -> dict[int, dict]:
@@ -53,6 +54,16 @@ def build_router(settings: Settings) -> APIRouter:
         summary = {k: v for k, v in doc.items() if k not in ("pages", "changes", "unknown_words")}
         return {**summary, "pages": pages, "unknown_words": doc["unknown_words"]}
 
+    @router.get("/{request_id}/export")
+    async def export_document(request_id: str, format: Literal["docx", "pdf"] = Query("docx")):
+        """Tải tài liệu đã lưu dạng .docx / .pdf (dựng lại bảng, chữ đậm / nghiêng, căn lề)."""
+        doc = await load(request_id)
+        if not any(p.get("html") for p in doc["pages"]):
+            raise HTTPException(status_code=409, detail="Document has no HTML (stored by an older version)")
+        source = (doc.get("s3_path") or "").rstrip("/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        title = source or str(doc.get("document_id") or request_id)
+        return await build_file(settings, [p.get("html") or "" for p in doc["pages"]], format, title)
+
     @router.get("/{request_id}/pages/{page}")
     async def get_page(request_id: str, page: int):
         """Mọi dòng của một trang, dòng bị sửa kèm bản trước."""
@@ -76,6 +87,10 @@ def build_router(settings: Settings) -> APIRouter:
             "error": found.get("error"),
             "correction_count": len(found.get("corrections") or []),
             "lines": lines,
+            # HTML của trang (bảng giữ cấu trúc); kết quả cũ chưa có thì null
+            "html": found.get("html"),
+            # Đầu ra nguyên bản của Chandra (trước khi dọn HTML); null nếu trang không OCR hoặc kết quả cũ
+            "chandra_raw": found.get("chandra_raw"),
             "unknown_words": [w for w in doc["unknown_words"] if page in (w["pages"] or [])],
         }
 

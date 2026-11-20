@@ -6,20 +6,24 @@ from pathlib import Path
 from ..config import Settings
 from ..pipeline.pages import PageSource, TooManyPages, UnsupportedFile
 from .select import kind, natural_key, plan
-from .textfile import read_text_file
+from .textfile import read_text_pages
 
 log = logging.getLogger("ocr.inputs")
 
 
-def text_page(number: int, text: str) -> dict:
-    return {"page": number, "raw_text": text, "text": text, "source": "text_file", "corrections": [], "error": None}
+def text_page(number: int, page: dict) -> dict:
+    """page = {"text", "layout"}; docx có layout (bảng giữ ô gộp) để dựng lại HTML."""
+    out = {"page": number, "raw_text": page["text"], "text": page["text"], "source": "text_file", "corrections": [], "error": None}
+    if page.get("layout"):
+        out["layout"] = page["layout"]
+    return out
 
 
-def read_texts(fetch, keys: list[str], settings: Settings, info: dict) -> list[str] | None:
-    """Trả các trang của file văn bản đầu tiên dùng được."""
+def read_texts(fetch, keys: list[str], settings: Settings, info: dict) -> list[dict] | None:
+    """Trả các trang ({"text", "layout"}) của file văn bản đầu tiên dùng được."""
     for key in keys:
         path = fetch(key)
-        pages, problem = read_text_file(path, settings.text_page_chars)
+        pages, problem = read_text_pages(path, settings.text_page_chars)
         path.unlink(missing_ok=True)
         if not problem:
             info["files"].append(path.name)

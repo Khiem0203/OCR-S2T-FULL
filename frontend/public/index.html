@@ -80,6 +80,9 @@
           <p id="vMeta" class="muted"></p>
         </div>
         <div class="actions">
+          <button id="vDownloadDocx" class="btn export" hidden data-fmt="docx" title="File Word dựng lại: bảng, chữ đậm / nghiêng, căn lề; mỗi trang gốc một trang">Tải .docx</button>
+          <button id="vDownloadPdf" class="btn export" hidden data-fmt="pdf" title="File PDF dựng lại: bảng, chữ đậm / nghiêng, căn lề; mỗi trang gốc một trang">Tải .pdf</button>
+          <button id="vDownloadHtml" class="btn" hidden title="Giữ nguyên bảng; mở được bằng Word">Tải .html</button>
           <button id="vDownload" class="btn">Tải .txt</button>
           <button id="vClose" class="btn">Đóng</button>
         </div>
@@ -89,6 +92,7 @@
       <nav class="tabs small" id="vTabs">
         <button class="tab" data-view="fields">Thông tin</button>
         <button class="tab active" data-view="text">Văn bản</button>
+        <button class="tab" data-view="raw" title="Đầu ra nguyên bản của Chandra, trước khi dọn HTML">Chandra gốc</button>
         <button class="tab" data-view="changes">Chỗ đã sửa <span id="vChangeCount" class="pill"></span></button>
         <button class="tab" data-view="unknown">Từ lạ <span id="vUnknownCount" class="pill"></span></button>
         <button class="tab" data-view="input">Đầu vào</button>

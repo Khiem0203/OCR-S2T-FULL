@@ -134,3 +134,15 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--muted); font-weight: 600; }
 .empty { color: var(--muted); padding: 12px 0; }
+.page-html { background: var(--bg); padding: 12px; border-radius: 8px; overflow-x: auto; overflow-wrap: anywhere; }
+.page-html p, .page-html ul, .page-html ol { margin: 0 0 8px; }
+.page-html h1, .page-html h2, .page-html h3, .page-html h4, .page-html h5, .page-html h6 { font-size: 15px; margin: 4px 0 8px; }
+.page-html table { width: auto; min-width: 60%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.page-html th, .page-html td { border: 1px solid var(--muted); padding: 4px 8px; vertical-align: top; }
+.page-html th { color: var(--text); background: var(--card); text-align: center; }
+.page-html caption { font-weight: 600; text-align: left; margin-bottom: 4px; }
+.raw-bar { display: flex; gap: 6px; margin-bottom: 6px; }
+.raw-bar .tab { padding: 4px 10px; font-size: 12px; }
+.raw-note { font-size: 12px; margin: 0 0 12px; }
+.raw-frame { width: 100%; min-height: 120px; border: 1px solid var(--muted); border-radius: 8px; background: #fff; display: block; }
+.page pre.raw-src { font: 12px/1.45 ui-monospace, Consolas, monospace; max-height: 600px; overflow: auto; }

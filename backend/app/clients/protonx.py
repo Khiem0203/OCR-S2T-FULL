@@ -11,11 +11,12 @@ log = logging.getLogger("ocr.protonx")
 class ProtonXClient:
     """Client gọi service ProtonX."""
 
-    def __init__(self, http: httpx.AsyncClient, url: str, timeout: float, concurrency: int):
+    def __init__(self, http: httpx.AsyncClient, url: str, timeout: float, concurrency: int, log_output: bool = False):
         self._http = http
         self._url = url
         self._timeout = timeout
         self._sem = asyncio.Semaphore(concurrency)
+        self._log_output = log_output
 
     async def correct(self, texts: list[str]) -> list[str] | None:
         """Trả text đã sửa; None nếu lỗi."""
@@ -29,4 +30,8 @@ class ProtonXClient:
         if not isinstance(fixed, list) or len(fixed) != len(texts) or not all(isinstance(t, str) for t in fixed):
             log.warning("ProtonX returned %s texts for %d inputs", len(fixed) if isinstance(fixed, list) else "no", len(texts))
             return None
+        if self._log_output:
+            for i, (src, out) in enumerate(zip(texts, fixed), 1):
+                log.info("ProtonX %d/%d %s\n  in : %s\n  out: %s", i, len(texts),
+                         "changed" if src != out else "unchanged", src, out)
         return fixed

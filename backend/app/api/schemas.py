@@ -78,3 +78,15 @@ class WorkerStopRequest(_QueueModel):
 class WorkerRestartRequest(_QueueModel):
     num_workers: Optional[int] = Field(default=None, ge=1, le=16)
     concurrency: Optional[int] = Field(default=None, ge=1, le=8)
+
+
+class ExportRequest(BaseModel):
+    title: str = Field(default="", max_length=200, description="Tên văn bản (tên file tải về, tiêu đề trong file)")
+    pages: list[str] = Field(..., min_length=1, max_length=20000, description="HTML từng trang (pages[].html của kết quả)")
+
+    @field_validator("pages")
+    @classmethod
+    def _page_size(cls, value: list[str]) -> list[str]:
+        if sum(len(p) for p in value) > 50_000_000:
+            raise ValueError("pages are too large")
+        return value

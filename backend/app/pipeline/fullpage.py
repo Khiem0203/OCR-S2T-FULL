@@ -9,16 +9,17 @@ from pathlib import Path
 
 import httpx
 
-from ..clients.chandra import ChandraClient, ChandraError, html_to_text
+from ..clients.chandra import ChandraClient, ChandraError
 from ..clients.protonx import ProtonXClient
 from ..config import Settings
 from ..inputs.select import kind
 from ..inputs.pdftext import file_problem
-from ..inputs.textfile import read_text_file
+from ..inputs.textfile import read_text_pages
 from ..spell.checker import SpellChecker, load_replacements
 from ..spell.compare import compare_lines
 from ..spell.lexicon import Lexicon
 from ..spell.unknown import build_notice, find_unknown_words
+from .layout import layout_html, layout_text, parse_layout, text_html
 from .pages import PageSource, UnsupportedFile, jpeg_bytes, prepare_image, to_jpeg_b64
 
 log = logging.getLogger("ocr.flow")
@@ -49,7 +50,8 @@ def build_spell_checker(settings: Settings, http: httpx.AsyncClient, review: str
         return None
     fixer = None
     if settings.spell_mode == "both":
-        fixer = ProtonXClient(http, settings.spellfix_url, settings.spellfix_timeout, settings.spellfix_concurrency)
+        fixer = ProtonXClient(http, settings.spellfix_url, settings.spellfix_timeout, settings.spellfix_concurrency,
+                              settings.log_full_output)
     rules = load_replacements(settings.replacements_file) if settings.replacements_file else []
     return SpellChecker(lexicon, fixer, settings.spell_mode, review or settings.spell_review, settings.spell_batch_chars, rules)
 
@@ -58,6 +60,7 @@ def build_chandra(settings: Settings, http: httpx.AsyncClient) -> ChandraClient:
     return ChandraClient(
         http, settings.chandra_url, settings.chandra_model, settings.chandra_api_key,
         settings.chandra_max_tokens, settings.chandra_timeout, settings.ocr_concurrency,
+        settings.chandra_html_retries, settings.log_full_output,
     )
 
 
@@ -126,7 +129,10 @@ def prepare_pages(source: PageSource, out_dir: Path, settings: Settings, start: 
 async def ocr_b64(chandra: ChandraClient, b64: str, number: int, fallback_text: str, settings: Settings) -> dict:
     page = new_page(number)
     try:
-        page["raw_text"] = html_to_text(await chandra.ocr(b64))
+        # Giữ bố cục (bảng, danh sách) để dựng lại HTML sau khi sửa chính tả
+        html, page["chandra_raw"] = await chandra.ocr_raw(b64, f"page {number}")
+        page["layout"] = parse_layout(html)
+        page["raw_text"] = layout_text(page["layout"])
     except ChandraError:
         log.warning("page %d: OCR backend failed", number)
         if settings.pdf_text_fallback and fallback_text:
@@ -195,6 +201,11 @@ def finalize(pages: list[dict], settings: Settings, elapsed_ms: int, include_raw
         changes.extend({"page": p["page"], **c} for c in q.pop("changes", []))
         if not include_raw:
             q.pop("raw_text", None)
+        # HTML của trang: bảng giữ nguyên cấu trúc (colspan / rowspan), chữ đã sửa chính tả
+        layout = q.pop("layout", None)
+        q["html"] = layout_html(layout, q["text"]) if layout else text_html(q["text"])
+        # Đầu ra nguyên bản của Chandra (trước khi dọn HTML); null với trang không OCR
+        q["chandra_raw"] = q.get("chandra_raw")
         out_pages.append(q)
     return {
         "page_count": len(pages),
@@ -229,13 +240,14 @@ async def process_document(
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / name
             await asyncio.to_thread(path.write_bytes, data)
-            texts, problem = await asyncio.to_thread(read_text_file, path, settings.text_page_chars)
+            texts, problem = await asyncio.to_thread(read_text_pages, path, settings.text_page_chars)
         if not texts:
             raise UnsupportedFile(f"could not read {name}: {problem}")
         info = {"mode": "text", "files": [name], "skipped": []}
         if problem:
             info["warning"] = problem
-        pages = [{**new_page(i + 1), "raw_text": t, "text": t, "source": "text_file"} for i, t in enumerate(texts)]
+        pages = [{**new_page(i + 1), "raw_text": t["text"], "text": t["text"], "source": "text_file",
+                  **({"layout": t["layout"]} if t["layout"] else {})} for i, t in enumerate(texts)]
         await postprocess(pages, build_spell_checker(settings, http) if spellcheck else None, settings.spell_text_files)
         return finalize(pages, settings, int((time.perf_counter() - started) * 1000), include_raw, info)
 

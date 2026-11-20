@@ -49,7 +49,7 @@ async def _ocr_pages(images: list[tuple[int, object]], settings: Settings, http:
     for no, render in images:
         b64 = await asyncio.to_thread(lambda: to_jpeg_b64(render(), settings.max_long_side, settings.deskew))
         try:
-            text = html_to_text(await chandra.ocr(b64))
+            text = html_to_text(await chandra.ocr(b64, f"page {no}"))
         except ChandraError:
             log.warning("page %s: OCR backend failed", no)
             continue

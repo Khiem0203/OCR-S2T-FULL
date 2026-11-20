@@ -109,6 +109,25 @@ const GROUPS = [
       { method: "GET", path: "/api/documents/{request_id}/changes", summary: "Các dòng đã sửa",
         params: [RID, { name: "page", in: "query", type: "number" }, { name: "by", in: "query", type: "select", options: BY },
           ...PAGING(50, 500)], codes: [200, 401, 404, 503] },
+      { method: "GET", path: "/api/documents/{request_id}/export", summary: "Tải tài liệu đã lưu dạng .docx / .pdf", binary: true,
+        desc: "Dựng lại văn bản từ pages[].html: bảng (ô gộp), chữ đậm / nghiêng / gạch chân, căn lề; mỗi trang gốc một trang.",
+        params: [RID, { name: "format", in: "query", type: "select", options: ["docx", "pdf"] }], codes: [200, 401, 404, 409, 503] },
+    ],
+  },
+  {
+    title: "Xuất file", note: "/api/export",
+    ops: [
+      { method: "POST", path: "/api/export/{fmt}", summary: "Dựng .docx / .pdf từ HTML từng trang", binary: true,
+        desc: "pages: pages[].html của kết quả OCR (mỗi phần tử một trang). Giữ bảng (colspan / rowspan), <b> <i> <u> <sup> <sub>, căn lề; thẻ khác bị bỏ.",
+        params: [{ name: "fmt", in: "path", type: "select", options: ["docx", "pdf"], required: true }],
+        body: {
+          title: "Quyết định 123",
+          pages: [
+            "<p style=\"text-align:center\"><b>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</b><br><b><u>Độc lập - Tự do - Hạnh phúc</u></b></p>\n<h2 style=\"text-align:center\">QUYẾT ĐỊNH</h2>\n<p><b>Điều 1.</b> Giao đất cho đơn vị.</p>\n<table border=\"1\"><tr><th rowspan=\"2\">STT</th><th colspan=\"2\">Kết quả</th></tr><tr><th>Đạt</th><th>Không đạt</th></tr><tr><td>1</td><td>12</td><td>1</td></tr></table>",
+            "<p>Trang thứ hai.</p>",
+          ],
+        },
+        codes: [200, 401, 422, 500] },
     ],
   },
   {
@@ -398,6 +417,8 @@ function buildRequest(op, inputs, textarea) {
     body = form;
     curl.push(...formShow);
   }
+  // Kết quả là file: curl lưu theo tên server gửi
+  if (op.binary) curl.push("-OJ");
   return { method: op.method, url, headers, body, curl: curl.join(" \\\n  ") };
 }
 
@@ -409,6 +430,17 @@ async function send(req, signal) {
   } catch (err) {
     if (err.name === "AbortError") throw err;
     return { status: 0, ms: Math.round(performance.now() - started), text: String(err), json: null, type: "" };
+  }
+  const type = resp.headers.get("content-type") || "";
+  if (resp.ok && !/json|text/.test(type)) {
+    // File (.docx / .pdf): giữ nguyên dạng nhị phân để tải về
+    const blob = await resp.blob();
+    const disp = resp.headers.get("content-disposition") || "";
+    const star = disp.match(/filename\*=UTF-8''([^;]+)/i);
+    const plain = disp.match(/filename="([^"]+)"/i);
+    const filename = star ? decodeURIComponent(star[1]) : plain ? plain[1] : "download";
+    return { status: resp.status, statusText: resp.statusText, ms: Math.round(performance.now() - started),
+      text: `(file ${filename}, ${type}, ${blob.size} byte)`, json: null, type, blob, filename };
   }
   const text = await resp.text();
   const ms = Math.round(performance.now() - started);
@@ -423,13 +455,14 @@ async function send(req, signal) {
 
 function render(out, req, res, round) {
   const pretty = res.json != null ? JSON.stringify(res.json, null, 2) : res.text;
-  const download = el("button", { class: "link", type: "button" }, "Tải JSON");
+  const download = el("button", { class: "link", type: "button" }, res.blob ? "Tải file" : "Tải JSON");
   download.addEventListener("click", () => {
-    const a = el("a", { href: URL.createObjectURL(new Blob([pretty], { type: "application/json" })), download: "response.json" });
+    const blob = res.blob || new Blob([pretty], { type: "application/json" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: res.blob ? res.filename : "response.json" });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
-  const size = new Blob([res.text]).size;
+  const size = res.blob ? res.blob.size : new Blob([res.text]).size;
   out.replaceChildren(
     el("div", {}, el("h3", {}, "curl"), codeBox(req.curl)),
     el("div", {}, el("h3", {}, "URL"), codeBox(location.origin + req.url)),

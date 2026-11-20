@@ -129,9 +129,11 @@ Riêng lỗi `422` (dữ liệu gửi lên sai kiểu hoặc thiếu trường),
 | D.2 | POST | `/api/speech-to-text/sync` | chép lời một file, trả kết quả ngay |
 | D.3 | POST | `/api/book-metadata/sync` | thông tin xuất bản, trả kết quả ngay |
 | D.4 | POST | `/api/spellcheck` | sửa chính tả một đoạn văn bản |
+| D.5 | POST | `/api/export/{fmt}` | dựng file `.docx` / `.pdf` từ HTML từng trang |
 | E.1–E.4 | GET | `/api/documents...` | đọc kết quả OCR đã lưu |
 | E.5–E.8 | GET | `/api/transcripts...` | đọc bản chép lời đã lưu |
 | E.9–E.10 | GET | `/api/book-metadata...` | đọc thông tin xuất bản đã lưu |
+| E.11 | GET | `/api/documents/{request_id}/export` | tải tài liệu OCR đã lưu dạng `.docx` / `.pdf` |
 | F.1 | GET | `/health` | kiểm tra backend còn sống |
 
 ---
@@ -354,7 +356,8 @@ Các giá trị `error` thường gặp:
         "corrections": [
           {"line": 3, "wrong": "nuớc", "right": "nước", "by": "dict"}
         ],
-        "error": null
+        "error": null,
+        "html": "<p>CHƯƠNG 1<br>LỊCH SỬ HÌNH THÀNH<br>Năm 1945, đất nước bước vào thời kỳ mới.<br>Hội nghị họp tại Pác Bó.</p>"
       },
       {
         "page": 2,
@@ -363,7 +366,8 @@ Các giá trị `error` thường gặp:
         "corrections": [
           {"line": 1, "wrong": "cũa", "right": "của", "by": "protonx"}
         ],
-        "error": null
+        "error": null,
+        "html": "<p>Trang thứ hai của tài liệu.</p>"
       }
     ],
     "correction_total": 2,
@@ -435,6 +439,8 @@ Các giá trị `error` thường gặp:
 | `pages[].text` | string | text của trang |
 | `pages[].source` | string | `chandra` (OCR ảnh), `pdf_text` (lớp chữ có sẵn trong PDF), `text_file` (đọc từ Word/txt), `none` (trang lỗi) |
 | `pages[].corrections[]` | array | các từ đã sửa trong trang: `line` là số dòng trong trang (từ 1), `wrong` là từ cũ, `right` là từ mới, `by` là cách sửa |
+| `pages[].html` | string | HTML của trang, **giữ nguyên bảng** (ô gộp `colspan` / `rowspan`, hàng tiêu đề, chú thích bảng), đoạn văn, tiêu đề, danh sách; chữ đã sửa chính tả. Dùng khi cần hiển thị hoặc xuất lại đúng bố cục (xem "Bảng trong tài liệu" bên dưới) |
+| `pages[].chandra_raw` | string / null | Đầu ra **nguyên bản** của Chandra cho trang này, trước khi dọn HTML (còn `data-bbox`, `data-label`, thẻ ảnh, công thức, có thể còn khung ` ```html `). Chỉ để kiểm tra / gỡ lỗi; muốn hiển thị thì dùng `html`. `null` nếu trang không qua OCR (file văn bản, lớp chữ PDF, lỗi). Các ví dụ trong tài liệu này bỏ trường này cho gọn |
 | `pages[].error` | string / null | `null` nếu trang xử lý được. Ngược lại là lý do, ví dụ `"OCR backend error"`; khi đó `text` của trang rỗng, các trang khác vẫn có kết quả |
 | `correction_total` | number | tổng số từ đã sửa |
 | `changes[]` | array | các **dòng** đã bị sửa, dùng để hiển thị so sánh trước/sau |
@@ -460,6 +466,32 @@ Giá trị `by` (cách sửa):
 - `replace`: sửa theo bảng thay thế cố định.
 
 Văn bản đọc từ Word, txt hoặc lớp chữ PDF mặc định **không** bị sửa chính tả, nên `corrections` rỗng.
+
+**Bảng trong tài liệu.** Mỗi trang có hai dạng kết quả:
+
+- `text`: chữ thuần, dễ tìm kiếm. Mỗi khối (đoạn văn, danh sách, bảng) cách nhau một dòng trống; mỗi hàng bảng là một dòng, các ô cách nhau ` | `. Dạng này **không** giữ được ô gộp.
+- `html`: dựng lại **đúng cấu trúc bảng** như bản gốc: `<table>`, `<caption>`, `<th>` cho ô tiêu đề, `colspan` / `rowspan` cho ô gộp. Chữ trong ô là chữ đã sửa chính tả.
+
+Ví dụ một trang có bảng hai hàng tiêu đề, cột "Kết quả" gộp hai cột con:
+
+```json
+{
+  "page": 1,
+  "text": "BÁO CÁO KẾT QUẢ\n\nBảng 1. Tổng hợp\nSTT | Đơn vị | Kết quả | Ghi chú\nĐạt | Không đạt\n1 | Phòng Tài chính | 12 | 1 | \n2 | Phòng Nội vụ | Chưa báo cáo | Bổ sung",
+  "source": "chandra",
+  "corrections": [],
+  "error": null,
+  "html": "<h2>BÁO CÁO KẾT QUẢ</h2>\n<table border=\"1\"><caption>Bảng 1. Tổng hợp</caption><tr><th rowspan=\"2\">STT</th><th rowspan=\"2\">Đơn vị</th><th colspan=\"2\">Kết quả</th><th rowspan=\"2\">Ghi chú</th></tr><tr><th>Đạt</th><th>Không đạt</th></tr><tr><td>1</td><td>Phòng Tài chính</td><td>12</td><td>1</td><td></td></tr><tr><td>2</td><td>Phòng Nội vụ</td><td colspan=\"2\">Chưa báo cáo</td><td>Bổ sung</td></tr></table>"
+}
+```
+
+Về `html`:
+- Chỉ gồm các thẻ `h1`–`h6`, `p`, `br`, `pre`, `ul`, `ol`, `li`, `table`, `caption`, `tr`, `th`, `td`, `b`, `i`, `u`, `sup`, `sub` do backend tạo, và thuộc tính `colspan`, `rowspan`, `style="text-align:center|right|justify"`; mọi chữ đã được escape, nên chèn thẳng vào trang web được.
+- Hình ảnh, logo không có trong `html` (chỉ giữ chữ).
+- Giữ định dạng trong dòng: chữ **đậm** `<b>`, *nghiêng* `<i>`, gạch chân `<u>`, chỉ số trên / dưới (`m<sup>2</sup>`, `H<sub>2</sub>O`), và căn lề đoạn văn / ô bảng (giữa, phải, đều hai bên). Chữ đã sửa chính tả vẫn giữ định dạng của chữ gốc. Tiêu đề (`h1`–`h6`) vốn in đậm nên không có `<b>` bên trong.
+- Trang đọc từ file Word `.docx`: `html` giữ tiêu đề (Heading), danh sách, chữ đậm / nghiêng / gạch chân, căn lề, chữ định dạng All caps (viết hoa) và **bảng có ô gộp** của file Word (ô gộp ngang thành `colspan`, gộp dọc thành `rowspan`, hàng tiêu đề lặp lại thành `<th>`). Ở đây `text` có mỗi đoạn văn cách nhau một dòng trống, giống trang OCR.
+- Trang đọc từ `.doc`, `.odt`, `.rtf`, `.txt`, `.md` hoặc lớp chữ PDF: `html` là các đoạn `<p>` dựng từ `text` (không có bảng).
+- Muốn ra file Word / PDF: gửi `html` các trang tới D.5 `POST /api/export/{fmt}` (hoặc E.11 với tài liệu đã lưu).
 
 **Response `200`, thành công: Kết quả chép lời (B.3, C.3):**
 
@@ -638,14 +670,16 @@ Phía client **phải** dựng một API nhận request này:
         "text": "CHƯƠNG 1\nLỊCH SỬ HÌNH THÀNH\nNăm 1945, đất nước bước vào thời kỳ mới.\nHội nghị họp tại Pác Bó.",
         "source": "chandra",
         "corrections": [{"line": 3, "wrong": "nuớc", "right": "nước", "by": "dict"}],
-        "error": null
+        "error": null,
+        "html": "<p>CHƯƠNG 1<br>LỊCH SỬ HÌNH THÀNH<br>Năm 1945, đất nước bước vào thời kỳ mới.<br>Hội nghị họp tại Pác Bó.</p>"
       },
       {
         "page": 2,
         "text": "Trang thứ hai của tài liệu.",
         "source": "chandra",
         "corrections": [{"line": 1, "wrong": "cũa", "right": "của", "by": "protonx"}],
-        "error": null
+        "error": null,
+        "html": "<p>Trang thứ hai của tài liệu.</p>"
       }
     ],
     "correction_total": 2,
@@ -938,7 +972,8 @@ curl -X POST "$BASE_URL/api/ocr-fullpage/sync" \
       "corrections": [
         {"line": 1, "wrong": "nuớc", "right": "nước", "by": "dict"}
       ],
-      "error": null
+      "error": null,
+      "html": "<p>Năm 1945, đất nước bước vào thời kỳ mới.</p>"
     }
   ],
   "correction_total": 1,
@@ -1122,6 +1157,60 @@ Lỗi: `413` (quá nhiều file hoặc file quá lớn), `415` (không có file 
 
 Lỗi: `422` (thiếu `text` hoặc quá 200.000 ký tự).
 
+### D.5. `POST /api/export/{fmt}`: dựng file `.docx` / `.pdf`
+
+Dựng lại văn bản gần nhất với bản gốc từ `pages[].html` của kết quả OCR (B.4, B.5, D.1):
+
+- bảng giữ ô gộp (`colspan`, `rowspan`), hàng tiêu đề in đậm, căn giữa và lặp lại khi bảng sang trang (Word);
+- chữ in hoa giữ nguyên, chữ **đậm**, *nghiêng*, gạch chân, chỉ số trên / dưới, căn giữa / phải / đều hai bên;
+- tiêu đề, danh sách (có cấp con), xuống dòng trong đoạn;
+- **mỗi trang gốc bắt đầu một trang mới** trong file;
+- khổ A4, lề trên / dưới 20 mm, trái 30 mm, phải 15 mm, Times New Roman 13 (thể thức văn bản hành chính).
+
+Không có hình ảnh, con dấu, chữ ký (OCR chỉ lấy chữ). HTML gửi lên được đọc lại theo đúng bộ thẻ ở mục "Về `html`" (B.4); thẻ khác bị bỏ, chỉ lấy chữ, `<script>` / `<style>` bị bỏ cả nội dung.
+
+| Path | Giá trị |
+|---|---|
+| `fmt` | `docx` hoặc `pdf` |
+
+Request (`Content-Type: application/json`):
+
+```json
+{
+  "title": "Quyết định 123",
+  "pages": [
+    "<p style=\"text-align:center\"><b>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</b><br><b><u>Độc lập - Tự do - Hạnh phúc</u></b></p>\n<h2 style=\"text-align:center\">QUYẾT ĐỊNH</h2>\n<p><b>Điều 1.</b> Giao đất cho đơn vị.</p>",
+    "<p>Trang thứ hai.</p>"
+  ]
+}
+```
+
+| Trường | Kiểu | Bắt buộc | Ý nghĩa |
+|---|---|---|---|
+| `title` | string | không | Tên văn bản: tên file tải về và tiêu đề trong file (tối đa 200 ký tự; trống thì tên file là `ket-qua`) |
+| `pages` | string[] | có | HTML từng trang, đúng thứ tự (thường là `result.pages.map(p => p.html)`); 1–20.000 trang, tổng tối đa 50 triệu ký tự |
+
+Response `200`: nội dung file (không phải JSON).
+
+- `Content-Type`: `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (docx) hoặc `application/pdf`.
+- `Content-Disposition`: `attachment; filename="Quyet dinh 123.docx"; filename*=UTF-8''Quy%E1%BA%BFt%20%C4%91%E1%BB%8Bnh%20123.docx`.
+
+```bash
+curl -X POST "http://<máy-chủ>:9090/api/export/pdf" -u "<username>:<password>" \
+  -H "Content-Type: application/json" -d @trang.json -o ket-qua.pdf
+```
+
+```js
+const r = await fetch(`${BASE}/api/export/docx`, {
+  method: "POST",
+  headers: { Authorization: AUTH, "Content-Type": "application/json" },
+  body: JSON.stringify({ title: "Quyết định 123", pages: result.pages.map((p) => p.html || "") }),
+});
+const blob = await r.blob();   // lưu hoặc cho người dùng tải về
+```
+
+Lỗi: `401` (chưa đăng nhập), `422` (`fmt` khác `docx` / `pdf`, `pages` rỗng hoặc quá lớn), `500` (không dựng được file).
+
 ---
 
 ## Phần E. Đọc lại kết quả đã lưu
@@ -1241,11 +1330,15 @@ curl "$BASE_URL/api/documents/3f9a1c7e2b8d4e6fa0c5b1d2e3f4a5b6/pages/1" -u "<use
     },
     {"line": 4, "text": "Hội nghị họp tại Pác Bó.", "changed": false}
   ],
+  "html": "<p>CHƯƠNG 1<br>LỊCH SỬ HÌNH THÀNH<br>Năm 1945, đất nước bước vào thời kỳ mới.<br>Hội nghị họp tại Pác Bó.</p>",
   "unknown_words": [
     {"word": "Pác", "kind": "foreign", "count": 1, "pages": [1], "sample": "Hội nghị họp tại Pác Bó."}
   ]
 }
 ```
+
+`html` là HTML của trang (bảng giữ cấu trúc, xem mục "Bảng trong tài liệu" ở B.4); kết quả lưu từ phiên bản cũ thì là `null`.
+Trang còn có `chandra_raw`: đầu ra nguyên bản của Chandra (xem bảng ý nghĩa trường ở B.4); `null` nếu trang không OCR hoặc kết quả cũ.
 
 Lỗi `404`: `{"detail": "Document not found"}` hoặc `{"detail": "Page not found"}`.
 
@@ -1475,6 +1568,21 @@ Lỗi `404`:
   "detail": "Book metadata not found"
 }
 ```
+
+### E.11. `GET /api/documents/{request_id}/export`: tải tài liệu đã lưu dạng `.docx` / `.pdf`
+
+Như D.5 nhưng lấy `pages[].html` từ tài liệu đã lưu trong database.
+
+| Query | Kiểu | Mặc định | Mô tả |
+|---|---|---|---|
+| `format` | string | `docx` | `docx` hoặc `pdf` |
+
+```bash
+curl "http://<máy-chủ>:9090/api/documents/3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b/export?format=pdf" -u "<username>:<password>" -OJ
+```
+
+Response `200`: file, tên file là tên file gốc trên S3 (không có thì `document_id`, rồi `request_id`).
+Lỗi: `404` (không có tài liệu), `409` (kết quả lưu từ phiên bản cũ, chưa có `html`), `503` (chưa cấu hình database).
 
 ---
 

@@ -272,6 +272,254 @@ def read_docx(path: str | Path) -> list[str]:
     return [fn(p) for p in pages] if fn else pages
 
 
+_WORD_ALIGN = {1: "center", 2: "right", 3: "justify", 4: "justify", 5: "justify", 7: "justify", 8: "justify", 9: "justify"}
+
+
+def _para_align(para) -> str | None:
+    """Căn lề đoạn Word (kể cả kế thừa từ kiểu đoạn); căn trái trả None."""
+    try:
+        value = para.paragraph_format.alignment
+        style = para.style
+        while value is None and style is not None:
+            value = style.paragraph_format.alignment
+            style = style.base_style
+    except Exception:
+        return None
+    return _WORD_ALIGN.get(int(value)) if value is not None else None
+
+
+def _style_flag(para, name: str) -> bool:
+    """Đậm / nghiêng của kiểu đoạn (kể cả kiểu gốc)."""
+    try:
+        style = para.style
+        while style is not None:
+            value = getattr(style.font, name)
+            if value is not None:
+                return bool(value)
+            style = style.base_style
+    except Exception:
+        pass
+    return False
+
+
+def _para_segments(para) -> list[tuple[str, str]]:
+    """Đoạn Word -> các đoạn (chữ, kiểu): đậm, nghiêng, gạch chân, chỉ số trên / dưới; chữ "All caps" viết hoa."""
+    from ..pipeline.layout import fmt_of
+
+    try:
+        fonts = [r.font.name for r in para.runs if r.font.name]
+        if not fonts and para.style is not None and para.style.font is not None and para.style.font.name:
+            fonts = [para.style.font.name]
+    except Exception:
+        fonts = []
+    tcvn3 = any(_TCVN3_FONT.search(f) for f in fonts)
+    bold, italic = _style_flag(para, "bold"), _style_flag(para, "italic")
+    segs = []
+    try:
+        items = list(para.iter_inner_content())
+    except Exception:
+        return [(para.text, "")]
+    for item in items:
+        for run in getattr(item, "runs", None) or [item]:
+            text = run.text
+            if not text:
+                continue
+            font = run.font
+            if font.all_caps or font.small_caps:
+                text = text.upper()
+            if tcvn3:
+                text = convert_tcvn3(text, assume=True)
+            kinds = set()
+            if run.bold if run.bold is not None else bold:
+                kinds.add("b")
+            if run.italic if run.italic is not None else italic:
+                kinds.add("i")
+            if run.underline not in (None, False):
+                kinds.add("u")
+            if font.superscript:
+                kinds.add("sup")
+            if font.subscript:
+                kinds.add("sub")
+            segs.append((text, fmt_of(kinds)))
+    return segs
+
+
+def _docx_table(tbl, doc, qn, Paragraph) -> dict | None:
+    """Bảng Word -> khối bảng: gridSpan thành colspan, vMerge thành rowspan, hàng tiêu đề lặp thành th."""
+    from ..pipeline.layout import segments_to_lines
+
+    rows, open_cells = [], {}  # cột lưới -> ô đang gộp dọc
+    for tr in tbl.iterchildren(qn("w:tr")):
+        tr_pr = tr.find(qn("w:trPr"))
+        header = tr_pr is not None and tr_pr.find(qn("w:tblHeader")) is not None
+        col = 0
+        before = tr_pr.find(qn("w:gridBefore")) if tr_pr is not None else None
+        if before is not None:
+            col += int(before.get(qn("w:val"), "0") or 0)
+        row, grown = [], []
+        cells = [c for c in tr.iterchildren() if _tag(c) == "tc"]
+        cells += [c for sdt in tr.iterchildren(qn("w:sdt")) for c in sdt.iter(qn("w:tc"))]
+        for tc in cells:
+            tc_pr = tc.find(qn("w:tcPr"))
+            grid = tc_pr.find(qn("w:gridSpan")) if tc_pr is not None else None
+            span = max(1, int(grid.get(qn("w:val"), "1") or 1)) if grid is not None else 1
+            vmerge = tc_pr.find(qn("w:vMerge")) if tc_pr is not None else None
+            if vmerge is not None and vmerge.get(qn("w:val"), "continue") == "continue" and col in open_cells:
+                open_cells[col]["rowspan"] += 1
+                grown.append(open_cells[col])
+                col += span
+                continue
+            segs, align = [], None
+            for p in tc.iter(qn("w:p")):
+                para = Paragraph(p, doc)
+                part = _para_segments(para)
+                if not "".join(t for t, _ in part).strip():
+                    continue
+                if segs:
+                    segs.append((" ", ""))
+                else:
+                    align = _para_align(para)
+                segs.extend(part)
+            lines = segments_to_lines(segs, split=False)
+            text, marks = lines[0] if lines else ("", [])
+            cell = {"text": text, "th": header, "colspan": span, "rowspan": 1}
+            if marks:
+                cell["marks"] = marks
+            if align:
+                cell["align"] = align
+            row.append(cell)
+            if vmerge is not None:
+                open_cells[col] = cell
+            else:
+                open_cells.pop(col, None)
+            col += span
+        if row:
+            rows.append(row)
+        else:
+            # Cả hàng chỉ là phần gộp dọc: bỏ hàng, trả lại rowspan
+            for cell in grown:
+                cell["rowspan"] -= 1
+    return {"type": "table", "caption": "", "rows": rows} if rows else None
+
+
+def _docx_paragraph(el, doc, qn, Paragraph, page: list) -> None:
+    """Thêm đoạn văn vào trang: tiêu đề (Heading / Title), mục danh sách hoặc đoạn thường."""
+    from ..pipeline.layout import segments_to_lines
+
+    para = Paragraph(el, doc)
+    lines = segments_to_lines(_para_segments(para))
+    if not lines:
+        return
+    try:
+        style = (para.style.name or "").lower() if para.style is not None else ""
+    except Exception:
+        style = ""
+    num = el.find(f"./{qn('w:pPr')}/{qn('w:numPr')}")
+    if num is not None or style.startswith("list"):
+        lvl = num.find(qn("w:ilvl")) if num is not None else None
+        level = int(lvl.get(qn("w:val"), "0") or 0) if lvl is not None else 0
+        last = page[-1] if page else None
+        if not (last and last["type"] == "list"):
+            last = {"type": "list", "ordered": "number" in style, "items": []}
+            page.append(last)
+        for text, marks in lines:
+            item = {"text": text, "level": level}
+            if marks:
+                item["marks"] = marks
+            last["items"].append(item)
+        return
+    heading = re.match(r"heading (\d)", style)
+    tag = f"h{min(int(heading.group(1)), 6)}" if heading else ("h1" if style == "title" else "p")
+    if tag != "p":
+        from ..pipeline.layout import drop_kind
+
+        lines = [(t, drop_kind(m, "b")) for t, m in lines]
+    block = {"type": "text", "tag": tag, "lines": [t for t, _ in lines]}
+    if any(m for _, m in lines):
+        block["marks"] = [m for _, m in lines]
+    align = _para_align(para)
+    if align:
+        block["align"] = align
+    page.append(block)
+
+
+def _split_layout(blocks: list[dict], page_chars: int) -> list[list[dict]]:
+    """Trang Word quá dài (không có ngắt trang): chia thành trang ảo ở ranh giới khối."""
+    from ..pipeline.layout import layout_text
+
+    if len(layout_text(blocks)) <= page_chars * 2:
+        return [blocks]
+    pages, current, size = [], [], 0
+    for b in blocks:
+        n = len(layout_text([b]))
+        if current and size + n > page_chars:
+            pages.append(current)
+            current, size = [], 0
+        current.append(b)
+        size += n + 2
+    if current:
+        pages.append(current)
+    return pages
+
+
+def read_docx_layout(path: str | Path, page_chars: int = 3000) -> list[list[dict]]:
+    """Đọc docx thành bố cục từng trang (đoạn, tiêu đề, danh sách, bảng giữ ô gộp), chia trang như read_docx."""
+    from docx import Document
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+
+    doc = Document(str(path))
+    pages, current = [], []
+
+    def flush():
+        if current:
+            pages.append(list(current))
+        current.clear()
+
+    for kind, el in _blocks(doc.element.body, qn):
+        if kind == "tbl":
+            table = _docx_table(el, doc, qn, Paragraph)
+            if table:
+                current.append(table)
+            continue
+        mode = _page_break(el, qn)
+        if mode == "before":
+            flush()
+        _docx_paragraph(el, doc, qn, Paragraph, current)
+        for box in el.xpath('.//w:txbxContent[not(ancestor::*[local-name()="Fallback"])]//w:p'):
+            _docx_paragraph(box, doc, qn, Paragraph, current)
+        if mode == "after" or _section_break(el, qn):
+            flush()
+    flush()
+    from ..pipeline.layout import layout_text
+
+    fn = pick_legacy("\n".join(layout_text(p) for p in pages))
+    if fn:
+        from ..pipeline.layout import map_layout
+
+        pages = [map_layout(p, fn) for p in pages]
+    return [q for p in pages for q in _split_layout(p, page_chars)]
+
+
+def read_text_pages(path: str | Path, page_chars: int = 3000) -> tuple[list[dict], str]:
+    """Như read_text_file nhưng mỗi trang kèm bố cục: [{"text", "layout"}], lý do không dùng được.
+    docx có bố cục (bảng giữ ô gộp); định dạng khác layout = None."""
+    from ..pipeline.layout import layout_text
+
+    path = Path(path)
+    if path.suffix.lower() != ".docx":
+        texts, problem = read_text_file(path, page_chars)
+        return [{"text": t, "layout": None} for t in texts], problem
+    try:
+        layouts = [p for p in read_docx_layout(path, page_chars) if p]
+    except Exception as exc:
+        log.warning("%s: read failed: %s", path.name, type(exc).__name__)
+        return [], f"không mở được file ({type(exc).__name__})"
+    pages = [{"text": layout_text(b), "layout": b} for b in layouts]
+    pages = [p for p in pages if p["text"].strip()]
+    return pages, quality_problem([p["text"] for p in pages])
+
+
 # doc, odt, rtf
 
 

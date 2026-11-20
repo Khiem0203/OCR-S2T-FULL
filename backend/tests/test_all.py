@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.api.main import create_app
 from app.api.schemas import FullPageRequest
-from app.clients.chandra import html_to_text
+from app.clients.chandra import OCR_LAYOUT_PROMPT, RETRY_TEMPERATURE, html_to_text, normalize_html, to_html
 from app.config import QUEUES, ROOT, Settings, load_settings
 from app.pipeline import fullpage as flow
 from app.spell.checker import SpellChecker, load_replacements
@@ -57,6 +57,216 @@ class HtmlToText(unittest.TestCase):
         self.assertIn("39 | 111", text)
         self.assertNotIn("invented", text)
         self.assertIn("m2", text)
+
+
+class ChandraHtmlOnly(unittest.TestCase):
+    def test_html_is_detected(self):
+        self.assertEqual(normalize_html('<div data-label="Text"><p>A</p></div>'), ('<div data-label="Text"><p>A</p></div>', True))
+        self.assertEqual(normalize_html("```html\n<p>A</p>\n```"), ("<p>A</p>", True))
+        self.assertEqual(normalize_html("  "), ("", True))
+        for bad in ('<analyze>[{"text": "A"}]</analyze>', '[{"titles": "A"}]', '{"text": "A"}', "# Tiêu đề", "Chữ thường", "<unknown>x"):
+            self.assertFalse(normalize_html(bad)[1], bad)
+
+    def test_non_html_is_converted_to_html(self):
+        md = to_html("# Tiêu đề\n\n- Dòng **một**\n- Dòng <hai>\n\n| a | b |\n|---|---|")
+        self.assertEqual(md, "<p>Tiêu đề</p>\n<p>Dòng một<br>Dòng &lt;hai&gt;</p>\n<p>| a | b |</p>")
+        self.assertTrue(normalize_html(md)[1])
+        js = to_html('<analyze>[{"text": "\'Việc thực hiện nghị quyết\'"}]</analyze>')
+        self.assertTrue(normalize_html(js)[1])
+        self.assertIn("Việc thực hiện nghị quyết", html_to_text(js))
+
+    def test_retries_until_html(self):
+        mocks = Mocks(['<analyze>[{"titles": "x"}]', "# Markdown", '<div data-label="Text"><p>Xin chào</p></div>'])
+        with make_client(mocks) as client:
+            r = client.post("/api/ocr-fullpage/sync", headers=KEY, files={"file": ("a.png", make_png(), "image/png")})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["text"], "Xin chào")
+        self.assertEqual([q["temperature"] for q in mocks.chandra_requests], [0, RETRY_TEMPERATURE, RETRY_TEMPERATURE])
+
+    def test_gives_html_when_retries_run_out(self):
+        mocks = Mocks(["## Quyết định\n\nĐiều **1**. Giao đất"])
+        with make_client(mocks, chandra_html_retries=1) as client:
+            r = client.post("/api/ocr-fullpage/sync", headers=KEY, files={"file": ("a.png", make_png(), "image/png")})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(mocks.chandra_requests), 2)
+        self.assertEqual(r.json()["text"], "Quyết định\n\nĐiều 1. Giao đất")
+
+    def test_page_keeps_raw_chandra_output_and_logs_it(self):
+        raw = '```html\n<div data-bbox="1 2 3 4" data-label="Text"><p>Xin chào</p></div>\n```'
+        mocks = Mocks(raw)
+        with make_client(mocks, log_full_output=True) as client, self.assertLogs("ocr", "INFO") as logs:
+            r = client.post("/api/ocr-fullpage/sync", headers=KEY, files={"file": ("a.png", make_png(), "image/png")})
+        self.assertEqual(r.status_code, 200, r.text)
+        page = r.json()["pages"][0]
+        self.assertEqual(page["chandra_raw"], raw)
+        self.assertEqual(page["html"], "<p>Xin chào</p>")
+        out = "\n".join(logs.output)
+        self.assertIn("[page 1] Chandra output, attempt 1/3", out)
+        self.assertIn(raw, out)
+
+    def test_text_file_page_has_no_raw_chandra_output(self):
+        with make_client(Mocks()) as client:
+            r = client.post("/api/ocr-fullpage/sync", headers=KEY, files={"file": ("a.txt", "Xin chào".encode(), "text/plain")})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIsNone(r.json()["pages"][0]["chandra_raw"])
+
+    def test_protonx_logs_every_text_in_full(self):
+        from app.clients.protonx import ProtonXClient
+
+        def handler(req):
+            return httpx.Response(200, json={"texts": ["Đất nước", "giữ nguyên"]})
+
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+                return await ProtonXClient(http, "http://x/spellfix/correct", 5, 1, log_output=True).correct(["Đất nuớc", "giữ nguyên"])
+
+        with self.assertLogs("ocr.protonx", "INFO") as logs:
+            self.assertEqual(asyncio.run(run()), ["Đất nước", "giữ nguyên"])
+        out = "\n".join(logs.output)
+        self.assertIn("ProtonX 1/2 changed\n  in : Đất nuớc\n  out: Đất nước", out)
+        self.assertIn("ProtonX 2/2 unchanged", out)
+
+
+class InlineFormatting(unittest.TestCase):
+    HTML = (
+        '<div data-label="Page-Header"><p style="text-align: center;"><b>CỘNG HÒA XÃ HỘI</b><br><b><u>Độc lập</u></b></p></div>'
+        '<p align="right"><i>Hà Nội, ngày 1</i></p>'
+        '<h2><b>QUYẾT ĐỊNH</b></h2>'
+        '<p><b>Điều 1.</b> Người đưoc giao 120 m<sup>2</sup></p>'
+        '<table><tr><th>Tên</th></tr><tr><td style="text-align:center"><strong>Phòng A</strong></td></tr></table>'
+        '<ul><li><em>Mục</em> một</li></ul>'
+    )
+
+    def test_layout_keeps_bold_italic_and_alignment(self):
+        from app.pipeline.layout import layout_html, parse_layout
+
+        page = layout_html(parse_layout(self.HTML))
+        self.assertIn('<p style="text-align:center"><b>CỘNG HÒA XÃ HỘI</b><br><b><u>Độc lập</u></b></p>', page)
+        self.assertIn('<p style="text-align:right"><i>Hà Nội, ngày 1</i></p>', page)
+        self.assertIn("<h2>QUYẾT ĐỊNH</h2>", page)
+        self.assertIn("<p><b>Điều 1.</b> Người đưoc giao 120 m<sup>2</sup></p>", page)
+        self.assertIn('<td style="text-align:center"><b>Phòng A</b></td>', page)
+        self.assertIn("<li><i>Mục</i> một</li>", page)
+
+    def test_spelling_fix_keeps_formatting(self):
+        from app.pipeline.layout import layout_html, layout_text, parse_layout
+
+        blocks = parse_layout("<p><b>Người đưoc giao</b> việc</p>")
+        fixed = layout_text(blocks).replace("đưoc", "được")
+        self.assertEqual(layout_html(blocks, fixed), "<p><b>Người được giao</b> việc</p>")
+
+    def test_remap_marks_follows_changed_text(self):
+        from app.pipeline.layout import remap_marks
+
+        self.assertEqual(remap_marks("ab cd", "abx cd", [[0, 2, "b"]]), [[0, 3, "b"]])
+        self.assertEqual(remap_marks("ab cd", "ab cdx", [[3, 5, "i"]]), [[3, 6, "i"]])
+
+    def test_sync_ocr_html_keeps_bold_after_spellcheck(self):
+        mocks = Mocks('<div data-label="Text"><p style="text-align:center"><b>Người đưoc giao</b></p></div>',
+                      spellfix=swap("đưoc", "được"))
+        with make_client(mocks) as client:
+            r = client.post("/api/ocr-fullpage/sync", headers=KEY, files={"file": ("a.png", make_png(), "image/png")})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["pages"][0]["html"], '<p style="text-align:center"><b>Người được giao</b></p>')
+
+    def test_docx_runs_keep_bold_caps_and_alignment(self):
+        import io
+
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        from app.inputs.textfile import read_text_pages
+        from app.pipeline.layout import layout_html
+
+        d = Document()
+        p = d.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run("Quốc hiệu").bold = True
+        caps = p.add_run(" độc lập")
+        caps.font.all_caps = True
+        q = d.add_paragraph("Nội dung ")
+        q.add_run("nghiêng").italic = True
+        t = d.add_table(rows=1, cols=1)
+        t.cell(0, 0).paragraphs[0].add_run("Ô đậm").bold = True
+        buf = io.BytesIO()
+        d.save(buf)
+        path = Path(os.environ["TEMP_DIR"]) / "dinh-dang.docx"
+        path.write_bytes(buf.getvalue())
+        pages, problem = read_text_pages(path)
+        self.assertEqual(problem, "")
+        self.assertEqual(pages[0]["text"].split("\n")[0], "Quốc hiệu ĐỘC LẬP")
+        page = layout_html(pages[0]["layout"])
+        self.assertIn('<p style="text-align:center"><b>Quốc hiệu</b> ĐỘC LẬP</p>', page)
+        self.assertIn("<p>Nội dung <i>nghiêng</i></p>", page)
+        self.assertIn("<td><b>Ô đậm</b></td>", page)
+
+
+class Export(unittest.TestCase):
+    PAGES = [
+        '<p style="text-align:center"><b>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</b></p>'
+        '<table border="1"><caption>Bảng 1</caption><tr><th rowspan="2">STT</th><th colspan="2">Kết quả</th></tr>'
+        '<tr><th>Đạt</th><th>Không</th></tr><tr><td>1</td><td><i>12</i></td><td>1</td></tr></table>',
+        "<h1>PHỤ LỤC</h1><ul><li>Mục một</li></ul>",
+    ]
+
+    def test_export_docx_rebuilds_tables_and_formatting(self):
+        import io
+
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        with make_client(Mocks()) as client:
+            r = client.post("/api/export/docx", headers=KEY, json={"title": "Quyết định 1", "pages": self.PAGES})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn("filename*=UTF-8''Quy%E1%BA%BFt%20%C4%91%E1%BB%8Bnh%201.docx", r.headers["content-disposition"])
+        doc = Document(io.BytesIO(r.content))
+        first = doc.paragraphs[0]
+        self.assertEqual(first.text, "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM")
+        self.assertEqual(first.alignment, WD_ALIGN_PARAGRAPH.CENTER)
+        self.assertTrue(first.runs[0].bold)
+        table = doc.tables[0]
+        self.assertEqual((len(table.rows), len(table.columns)), (3, 3))
+        self.assertIs(table.cell(0, 0)._tc, table.cell(1, 0)._tc)   # STT gộp 2 hàng
+        self.assertIs(table.cell(0, 1)._tc, table.cell(0, 2)._tc)   # Kết quả gộp 2 cột
+        self.assertTrue(table.cell(2, 1).paragraphs[0].runs[0].italic)
+        self.assertIn("PHỤ LỤC", [p.text for p in doc.paragraphs])
+        self.assertIn('w:type="page"', doc.element.xml)   # mỗi trang gốc một trang
+
+    def test_export_pdf_has_one_page_per_source_page(self):
+        import pymupdf
+
+        with make_client(Mocks()) as client:
+            r = client.post("/api/export/pdf", headers=KEY, json={"title": "QĐ", "pages": self.PAGES})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.headers["content-type"], "application/pdf")
+        pdf = pymupdf.open("pdf", r.content)
+        self.assertEqual(pdf.page_count, 2)
+        self.assertIn("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", pdf[0].get_text())
+        self.assertIn("Không", pdf[0].get_text())
+        self.assertIn("PHỤ LỤC", pdf[1].get_text())
+
+    def test_export_pdf_without_font_files_keeps_vietnamese(self):
+        import pymupdf
+
+        from app.pipeline.export import page_layouts, to_pdf
+
+        pdf = pymupdf.open("pdf", to_pdf(page_layouts(["<p><b>Người được giao</b> ữ ỵ</p>"]), "", None))
+        self.assertIn("Người được giao ữ ỵ", pdf[0].get_text())
+
+    def test_export_rejects_unknown_format_and_needs_login(self):
+        with make_client(Mocks()) as client:
+            self.assertEqual(client.post("/api/export/odt", headers=KEY, json={"pages": ["<p>a</p>"]}).status_code, 422)
+            self.assertEqual(client.post("/api/export/docx", json={"pages": ["<p>a</p>"]}).status_code, 401)
+            self.assertEqual(client.post("/api/export/docx", headers=KEY, json={"pages": []}).status_code, 422)
+
+    def test_export_drops_unsafe_html(self):
+        import pymupdf
+
+        with make_client(Mocks()) as client:
+            r = client.post("/api/export/pdf", headers=KEY,
+                            json={"pages": ['<p>An toàn</p><script>alert(1)</script><img src="http://x/y.png">']})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(pymupdf.open("pdf", r.content)[0].get_text().strip(), "An toàn")
 
 
 class Dictionaries(unittest.TestCase):
@@ -289,7 +499,11 @@ class Mocks:
             self.chandra_requests.append(body)
             if self.chandra_fail:
                 return httpx.Response(503, json={"error": "down"})
-            return httpx.Response(200, json={"choices": [{"message": {"content": self.chandra_html}, "finish_reason": "stop"}]})
+            # Danh sách: trả lần lượt, hết thì lặp lại câu cuối
+            html_out = self.chandra_html
+            if isinstance(html_out, list):
+                html_out = html_out.pop(0) if len(html_out) > 1 else html_out[0]
+            return httpx.Response(200, json={"choices": [{"message": {"content": html_out}, "finish_reason": "stop"}]})
         self.spellfix_requests.append(body)
         texts = self.spellfix(body["texts"]) if self.spellfix else body["texts"]
         return httpx.Response(200, json={"texts": texts})
@@ -318,6 +532,130 @@ def make_client(mocks: Mocks, **overrides):
 KEY = {"Authorization": "Basic " + base64.b64encode(b"tester:secret-pass-123").decode()}
 
 
+class TableLayout(unittest.TestCase):
+    TABLE = (
+        '<div data-label="Section-Header"><h2>BÁO CÁO</h2></div>'
+        '<div data-label="Figure"><img alt="logo"/><p>mô tả ảnh</p></div>'
+        '<div data-label="Table"><table><caption>Bảng 1</caption>'
+        '<tr><th rowspan="2">STT</th><th colspan="2">Kết quả</th></tr>'
+        '<tr><th>Đạt</th><th>Không</th></tr>'
+        '<tr><td>1</td><td>Người đưoc giao</td><td></td></tr></table></div>'
+        '<ul><li>Mục 1<ul><li>Mục 1.1</li></ul></li><li>Mục 2</li></ul>'
+    )
+
+    def test_layout_keeps_table_structure(self):
+        from app.pipeline.layout import layout_html, layout_text, parse_layout
+
+        blocks = parse_layout(self.TABLE)
+        self.assertEqual([b["type"] for b in blocks], ["text", "table", "list"])
+        self.assertEqual(layout_text(blocks),
+                         "BÁO CÁO\n\nBảng 1\nSTT | Kết quả\nĐạt | Không\n1 | Người đưoc giao | \n\nMục 1\nMục 1.1\nMục 2")
+        page = layout_html(blocks)
+        self.assertNotIn("mô tả ảnh", page)
+        self.assertIn('<th rowspan="2">STT</th><th colspan="2">Kết quả</th>', page)
+        self.assertIn("<caption>Bảng 1</caption>", page)
+        self.assertIn("<ul><li>Mục 1<ul><li>Mục 1.1</li></ul></li><li>Mục 2</li></ul>", page)
+
+    def test_text_is_escaped_and_bad_text_keeps_original(self):
+        from app.pipeline.layout import layout_html, parse_layout
+
+        blocks = parse_layout("<table><tr><td>&lt;script&gt;</td><td>a</td></tr></table>")
+        self.assertIn("<td>&lt;script&gt;</td>", layout_html(blocks))
+        # Số dòng lệch: giữ chữ gốc
+        self.assertIn("<td>a</td>", layout_html(blocks, "x\ny\nz"))
+        # Số ô lệch trong một hàng: giữ chữ gốc của hàng đó
+        self.assertIn("<td>a</td>", layout_html(blocks, "only one cell"))
+
+    def test_sync_ocr_returns_table_html_with_spelling_fixed(self):
+        mocks = Mocks(self.TABLE, swap("đưoc", "được"))
+        with make_client(mocks) as client:
+            r = client.post("/api/ocr-fullpage/sync", headers=KEY, files={"file": ("a.png", make_png(), "image/png")})
+        self.assertEqual(r.status_code, 200, r.text)
+        page = r.json()["pages"][0]
+        self.assertNotIn("layout", page)
+        self.assertIn("1 | Người được giao |", page["text"])
+        self.assertIn('<tr><td>1</td><td>Người được giao</td><td></td></tr>', page["html"])
+        self.assertIn('<th colspan="2">Kết quả</th>', page["html"])
+
+    def test_text_file_pages_get_paragraph_html(self):
+        from app.pipeline.layout import text_html
+
+        self.assertEqual(text_html("Dòng 1\nDòng <2>\n\nĐoạn 2"), "<p>Dòng 1<br>Dòng &lt;2&gt;</p>\n<p>Đoạn 2</p>")
+
+
+def make_table_docx() -> bytes:
+    """Word có tiêu đề, danh sách và bảng gộp ô (2 hàng tiêu đề, cột "Kết quả" gộp ngang, ô gộp dọc)."""
+    import io
+
+    from docx import Document
+
+    d = Document()
+    d.add_heading("BÁO CÁO KẾT QUẢ", level=1)
+    d.add_paragraph("Người đưoc giao")
+    d.add_paragraph("Mục một", style="List Bullet")
+    t = d.add_table(rows=4, cols=5)
+    for i, h in enumerate(["STT", "Đơn vị", "Kết quả", "", "Ghi chú"]):
+        t.cell(0, i).text = h
+    for i, h in enumerate(["", "", "Đạt", "Không đạt", ""]):
+        t.cell(1, i).text = h
+    t.cell(0, 2).merge(t.cell(0, 3))
+    for c in (0, 1, 4):
+        t.cell(0, c).merge(t.cell(1, c))
+    for i, v in enumerate(["1", "Phòng Tài chính", "12", "1", ""]):
+        t.cell(2, i).text = v
+    for i, v in enumerate(["2", "Phòng Nội vụ", "Chưa báo cáo", "", "Bổ sung"]):
+        t.cell(3, i).text = v
+    t.cell(3, 2).merge(t.cell(3, 3))
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
+class WordTables(unittest.TestCase):
+    def test_docx_layout_keeps_merged_cells(self):
+        from app.inputs.textfile import read_text_pages
+        from app.pipeline.layout import layout_html
+
+        path = Path(os.environ["TEMP_DIR"]) / "bang.docx"
+        path.write_bytes(make_table_docx())
+        pages, problem = read_text_pages(path)
+        self.assertEqual(problem, "")
+        self.assertEqual(len(pages), 1)
+        self.assertIn("STT | Đơn vị | Kết quả | Ghi chú\nĐạt | Không đạt\n1 | Phòng Tài chính | 12 | 1 | ", pages[0]["text"])
+        page = layout_html(pages[0]["layout"])
+        self.assertIn("<h1>BÁO CÁO KẾT QUẢ</h1>", page)
+        self.assertIn("<ul><li>Mục một</li></ul>", page)
+        self.assertIn('<td rowspan="2">STT</td><td rowspan="2">Đơn vị</td><td colspan="2">Kết quả</td><td rowspan="2">Ghi chú</td>', page)
+        self.assertIn('<td colspan="2">Chưa báo cáo</td><td>Bổ sung</td>', page)
+
+    def test_docx_layout_converts_legacy_fonts(self):
+        from app.inputs.textfile import read_text_pages
+
+        path = Path(os.environ["TEMP_DIR"]) / "vni-layout.docx"
+        path.write_bytes(make_docx(["Vieäc thöïc hieän"], ["Ñaûng boä tænh"]))
+        pages, problem = read_text_pages(path)
+        self.assertEqual(([p["text"] for p in pages], problem), (["Việc thực hiện", "Đảng bộ tỉnh"], ""))
+
+    def test_sync_docx_upload_returns_table_html(self):
+        mocks = Mocks(spellfix=swap("đưoc", "được"))
+        with make_client(mocks, spell_text_files=True) as client:
+            r = client.post("/api/ocr-fullpage/sync", headers=KEY, files={"file": ("bang.docx", make_table_docx(), "application/octet-stream")})
+        self.assertEqual(r.status_code, 200, r.text)
+        page = r.json()["pages"][0]
+        self.assertEqual(page["source"], "text_file")
+        self.assertNotIn("layout", page)
+        self.assertEqual(mocks.chandra_requests, [])
+        self.assertIn("<p>Người được giao</p>", page["html"])
+        self.assertIn('<td colspan="2">Kết quả</td>', page["html"])
+
+    def test_worker_text_page_keeps_layout(self):
+        from app.inputs.collect import text_page
+
+        layout = [{"type": "text", "tag": "p", "lines": ["A"]}]
+        self.assertEqual(text_page(3, {"text": "A", "layout": layout})["layout"], layout)
+        self.assertNotIn("layout", text_page(1, {"text": "A", "layout": None}))
+
+
 class SyncApi(unittest.TestCase):
     def test_pipeline_ocr_protonx_and_unknown_word_notice(self):
         mocks = Mocks("<p>Người đưoc giao đất qwxzv</p>", swap("đưoc", "được"))
@@ -341,6 +679,8 @@ class SyncApi(unittest.TestCase):
         self.assertIn("qwxzv", body["notice"])
         sent = mocks.chandra_requests[0]
         self.assertEqual(sent["messages"][0]["content"][0]["type"], "image_url")
+        self.assertEqual(sent["messages"][0]["content"][1], {"type": "text", "text": OCR_LAYOUT_PROMPT})
+        self.assertEqual(sent["temperature"], 0)
 
     def test_no_notice_when_every_word_is_known(self):
         with make_client(Mocks("<p>Việc thực hiện nghị quyết</p>")) as client:
@@ -961,6 +1301,24 @@ class DocumentsApi(unittest.TestCase):
         self.assertEqual(body["unknown_words"][0]["word"], "qwxzv")
         self.assertNotIn("changes", body)
 
+    def test_stored_document_exports_to_docx(self):
+        import io
+
+        from docx import Document
+
+        pages = [{**p, "html": f"<p><b>Trang {p['page']}</b></p>"} for p in self.PAGES]
+        answers = [("SELECT request_id", [self.SUMMARY + (pages, self.CHANGES)]), ("SELECT word", self.UNKNOWN)]
+        with self.client(answers) as c:
+            r = c.get("/api/documents/rid-12345678/export?format=docx", headers=KEY)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn("attachment;", r.headers["content-disposition"])
+        texts = [p.text for p in Document(io.BytesIO(r.content)).paragraphs if p.text]
+        self.assertEqual(texts, ["Trang 1", "Trang 2"])
+
+    def test_stored_document_without_html_cannot_be_exported(self):
+        with self.client(self.doc_answers()) as c:
+            self.assertEqual(c.get("/api/documents/rid-12345678/export?format=pdf", headers=KEY).status_code, 409)
+
     def test_page_lists_every_line_and_marks_the_changed_ones(self):
         with self.client(self.doc_answers()) as c:
             body = c.get("/api/documents/rid-12345678/pages/1", headers=KEY).json()
@@ -1476,6 +1834,23 @@ class BookMetadata(unittest.TestCase):
 
 
 class Config(unittest.TestCase):
+    def test_max_pages_zero_means_no_limit(self):
+        from app.pipeline.pages import PageSource, TooManyPages
+
+        doc = fitz.open()
+        for _ in range(150):
+            doc.new_page()
+        data = doc.tobytes()
+        doc.close()
+        base = {"CELERY_BROKER_URL": "memory://", "CELERY_RESULT_BACKEND": "cache+memory://"}
+        with mock.patch.dict(os.environ, {**base, "MAX_PAGES": "0"}):
+            unlimited = load_settings().max_pages
+        self.assertEqual(PageSource(data, 72, unlimited).count, 150)
+        with mock.patch.dict(os.environ, {**base, "MAX_PAGES": "100"}):
+            limited = load_settings().max_pages
+        with self.assertRaises(TooManyPages):
+            PageSource(data, 72, limited)
+
     def test_refuses_to_start_without_login(self):
         with self.assertRaises(RuntimeError):
             create_app(Settings())

@@ -294,10 +294,15 @@ async function openJob(job) {
     return;
   }
   delete $("vBody").dataset.waiting;
+  const exportable = job.kind === "ocr" && !!res.pages?.some((p) => p.html);
+  for (const id of ["vDownloadHtml", "vDownloadDocx", "vDownloadPdf"]) $(id).hidden = !exportable;
   const book = job.kind === "metadata";
+  const hasRaw = job.kind === "ocr" && !!res.pages?.some((p) => p.chandra_raw != null);
   document.querySelectorAll("#vTabs .tab").forEach((t) => {
-    t.hidden = book ? ["changes", "unknown"].includes(t.dataset.view) : t.dataset.view === "fields";
+    t.hidden = book ? ["changes", "unknown", "raw"].includes(t.dataset.view)
+      : t.dataset.view === "fields" || (t.dataset.view === "raw" && !hasRaw);
   });
+  if (view === "raw" && !hasRaw) view = "text";
   if (book) {
     view = "fields";
     $("vMeta").textContent = [`${res.field_count} trường`, SOURCES[res.source] || "không tìm thấy",
@@ -336,6 +341,7 @@ function render() {
   const body = {
     fields: () => fieldsView(res),
     text: () => book ? el("pre", { class: "plain" }, res.text || "(không có)") : speech ? speechText(res) : ocrText(res),
+    raw: () => rawView(res),
     changes: () => changesView(res, speech),
     unknown: () => unknownView(res, speech),
     input: () => book ? bookInputView(res) : inputView(res, speech),
@@ -363,12 +369,123 @@ function ocrText(res) {
   const wrap = el("div");
   for (const p of res.pages) {
     const src = { chandra: "OCR", pdf_text: "text PDF", text_file: "file văn bản", none: "lỗi" }[p.source] || p.source;
+    let body;
+    if (p.html) {
+      // HTML do backend dựng (chỉ thẻ đoạn / danh sách / bảng, chữ đã escape): bảng giữ nguyên ô gộp
+      body = el("div", { class: "page-html" });
+      body.innerHTML = p.html;
+    } else {
+      body = el("pre", {}, p.text || "(trống)");
+    }
     wrap.append(el("div", { class: "page" },
-      el("h3", {}, `Trang ${p.page} · ${src}${p.error ? " · " + p.error : ""}`),
-      el("pre", {}, p.text || "(trống)")));
+      el("h3", {}, `Trang ${p.page} · ${src}${p.error ? " · " + p.error : ""}`), body));
   }
   return wrap;
 }
+
+// Đầu ra nguyên bản của Chandra (trước khi dọn HTML): xem hiển thị hoặc mã nguồn
+let rawMode = "render";
+
+function rawView(res) {
+  const wrap = el("div");
+  const bar = el("div", { class: "raw-bar" });
+  for (const [mode, label] of [["render", "Hiển thị"], ["source", "Mã nguồn"]]) {
+    const b = el("button", { class: "tab" + (rawMode === mode ? " active" : "") }, label);
+    b.addEventListener("click", () => { rawMode = mode; render(); });
+    bar.append(b);
+  }
+  wrap.append(bar, el("p", { class: "muted raw-note" },
+    "Đầu ra Chandra trả về, chưa dọn: còn data-bbox, data-label, ảnh, công thức. Lần gửi lại (nếu có) chỉ giữ lần được dùng."));
+  for (const p of res.pages) {
+    const head = el("h3", {}, `Trang ${p.page}` + (p.chandra_raw == null ? " · không OCR" : ` · ${p.chandra_raw.length} ký tự`));
+    let body;
+    if (p.chandra_raw == null) {
+      body = el("p", { class: "muted" }, "Trang này không qua Chandra (file văn bản, text PDF hoặc lỗi).");
+    } else if (rawMode === "source") {
+      body = el("pre", { class: "raw-src" }, p.chandra_raw || "(trống)");
+    } else {
+      body = rawFrame(p.chandra_raw);
+    }
+    wrap.append(el("div", { class: "page" }, head, body));
+  }
+  return wrap;
+}
+
+// HTML của model hiển thị trong iframe sandbox: không chạy script, không đụng tới trang chính
+function rawFrame(raw) {
+  const html = raw.replace(/^\s*```[a-zA-Z]*\s*\n?/, "").replace(/\n?```\s*$/, "");
+  const frame = el("iframe", { class: "raw-frame", sandbox: "allow-same-origin", title: "Chandra gốc" });
+  frame.srcdoc = `<!doctype html><meta charset="utf-8"><style>
+body { font: 14px/1.5 system-ui, sans-serif; margin: 8px; color: #222; background: #fff; }
+div[data-label] { border: 1px dashed #c9c9c9; margin: 4px 0; padding: 4px 6px; position: relative; }
+div[data-label]::before { content: attr(data-label); font: 10px monospace; color: #888; display: block; }
+table { border-collapse: collapse; } th, td { border: 1px solid #999; padding: 3px 6px; vertical-align: top; }
+img { display: block; min-height: 20px; border: 1px dashed #bbb; }
+</style>${html}`;
+  frame.addEventListener("load", () => {
+    try { frame.style.height = frame.contentDocument.documentElement.scrollHeight + 4 + "px"; } catch { /* giữ chiều cao mặc định */ }
+  });
+  return frame;
+}
+
+// Tải .docx / .pdf: backend dựng lại văn bản (bảng, chữ đậm / nghiêng, căn lề) từ HTML từng trang
+for (const btn of document.querySelectorAll("button.export")) {
+  btn.addEventListener("click", async () => {
+    const res = results.get(current?.id);
+    if (!res?.pages) return;
+    const fmt = btn.dataset.fmt;
+    const title = current.files[0].replace(/\.[^.]+$/, "");
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Đang tạo…";
+    try {
+      const r = await fetch(`/api/export/${fmt}`, {
+        method: "POST",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({ title, pages: res.pages.map((p) => p.html || "") }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail ? JSON.stringify(body.detail) : `HTTP ${r.status}`);
+      }
+      const a = el("a", { href: URL.createObjectURL(await r.blob()), download: `${title}.${fmt}` });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (err) {
+      alert(`Không tạo được file .${fmt}: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  });
+}
+
+// Tải kết quả OCR dạng .html (giữ bảng); Word mở được và lưu lại thành .docx
+$("vDownloadHtml").addEventListener("click", () => {
+  const res = results.get(current?.id);
+  if (!res?.pages) return;
+  const title = current.files[0].replace(/\.[^.]+$/, "");
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  const pages = res.pages.map((p) => `<section class="page">
+<h4 class="page-no">Trang ${p.page}</h4>
+${p.html || ""}
+</section>`);
+  const doc = `<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+body { font-family: "Times New Roman", serif; font-size: 13pt; line-height: 1.4; max-width: 900px; margin: 24px auto; padding: 0 16px; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+th, td { border: 1px solid #000; padding: 4px 6px; vertical-align: top; }
+th { font-weight: bold; text-align: center; }
+caption { font-weight: bold; margin-bottom: 4px; }
+.page-no { color: #888; font: 10pt sans-serif; border-bottom: 1px solid #ccc; margin: 24px 0 8px; }
+</style></head><body>
+${pages.join("\n")}
+</body></html>`;
+  const a = el("a", { href: URL.createObjectURL(new Blob([doc], { type: "text/html;charset=utf-8" })), download: title + ".html" });
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
 
 function play(fileName, start) {
   const files = localFiles.get(current.id) || [];

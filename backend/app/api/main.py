@@ -24,7 +24,7 @@ from ..worker.celery_app import celery_app
 from ..worker.book_tasks import submit_book
 from ..worker.speech_tasks import submit_speech
 from ..worker.tasks import submit_fullpage
-from . import books, documents, transcripts, uploads
+from . import books, documents, export, transcripts, uploads
 from .schemas import (
     FullPageRequest,
     SpeechRequest,
@@ -230,6 +230,7 @@ def create_app(settings: Settings | None = None, http: httpx.AsyncClient | None 
 
     # Cho web xem kết quả
     api.include_router(documents.build_router(settings))
+    api.include_router(export.build_router(settings))
     api.include_router(transcripts.build_router(settings))
     api.include_router(books.build_router(settings))
     # Tải file lên từ máy

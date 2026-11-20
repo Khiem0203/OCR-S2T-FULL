@@ -54,10 +54,16 @@ Nhớ mở cổng trên tường lửa nếu cần, ví dụ `sudo ufw allow 676
 6. Bấm vào việc đã xong để xem:
    - **Văn bản**: OCR theo từng trang (ghi rõ OCR / text PDF / file văn bản); chép lời theo từng đoạn có mốc thời gian.
      Bấm mốc thời gian để nghe lại đúng đoạn đó (khi file còn trong phiên trình duyệt đã tải lên).
+   - **Chandra gốc** (OCR): đầu ra nguyên bản của Chandra từng trang, trước khi dọn HTML. **Hiển thị** dựng HTML đó
+     (khung nét đứt ghi nhãn khối `data-label`; chạy trong khung cách ly, không chạy script), **Mã nguồn** xem chuỗi gốc.
    - **Chỗ đã sửa**: từ cũ gạch đỏ, từ mới xanh, kèm cách sửa (`protonx`, `dict`, `replace`).
    - **Từ lạ**: từ không có trong từ điển, kèm ngữ cảnh.
    - **Đầu vào**: file đã dùng, file bị bỏ qua, lý do bỏ lớp text PDF.
+   - **Văn bản** (OCR và file Word `.docx`): bảng hiện đúng cấu trúc như bản gốc (ô gộp hàng / cột, hàng tiêu đề).
    - **Tải .txt**: tải văn bản về máy.
+   - **Tải .docx** / **Tải .pdf** (OCR): backend dựng lại văn bản giống bản gốc nhất có thể: bảng (ô gộp), chữ in hoa,
+     đậm / nghiêng / gạch chân, căn giữa / phải, tiêu đề, danh sách; mỗi trang gốc một trang, A4, Times New Roman 13.
+   - **Tải .html** (OCR): tải kết quả giữ nguyên bảng; mở bằng Word rồi lưu thành `.docx` nếu cần.
 
 ## Thử API (kiểu Swagger)
 

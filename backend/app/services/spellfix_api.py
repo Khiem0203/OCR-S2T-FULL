@@ -36,6 +36,8 @@ BATCH_SIZE = int(os.getenv("SPELLFIX_BATCH_SIZE", "16"))
 DTYPE = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[os.getenv("SPELLFIX_DTYPE", "float32")]
 MIN_LEN_RATIO = float(os.getenv("SPELLFIX_MIN_LEN_RATIO", "0.8"))
 MAX_LEN_RATIO = float(os.getenv("SPELLFIX_MAX_LEN_RATIO", "1.25"))
+# Ghi đầy đủ từng câu vào / ra
+LOG_TEXTS = os.getenv("LOG_FULL_OUTPUT", "true").strip().lower() in ("1", "true", "yes", "on")
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.;:!?\n])\s+")
 
@@ -186,6 +188,9 @@ def correct(req: CorrectRequest):
     texts = correct_texts(req.texts)
     changed = sum(a != b for a, b in zip(req.texts, texts))
     log.info("request: %d texts, %d changed, %.2fs", len(req.texts), changed, time.time() - t0)
+    if LOG_TEXTS:
+        for i, (src, out) in enumerate(zip(req.texts, texts), 1):
+            log.info("text %d/%d %s\n  in : %s\n  out: %s", i, len(texts), "changed" if src != out else "unchanged", src, out)
     return CorrectResponse(texts=texts)
 
 

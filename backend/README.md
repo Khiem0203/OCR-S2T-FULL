@@ -269,6 +269,18 @@ mỗi mục giống một phần tử `changes` của kết quả (`page, line, 
 
 Kết quả của `/api/ocr-fullpage/sync` và `/api/spellcheck` cũng có `changes` với `segments`, nên web dùng được ngay mà không cần DB.
 
+## Xuất file Word / PDF
+
+`POST /api/export/docx` hoặc `/api/export/pdf` với `{"title": "...", "pages": [pages[].html ...]}` trả về file dựng lại văn bản;
+`GET /api/documents/{request_id}/export?format=docx|pdf` làm như vậy với tài liệu đã lưu. Giữ bảng (ô gộp, hàng tiêu đề),
+chữ in hoa, đậm / nghiêng / gạch chân, chỉ số trên / dưới, căn lề, tiêu đề, danh sách; mỗi trang gốc một trang; A4, Times New Roman 13.
+`.docx` dựng bằng python-docx, `.pdf` bằng PyMuPDF (không cần LibreOffice). Định dạng lấy từ HTML của Chandra (`<b>`, `<i>`,
+`text-align`...) và từ file Word tải lên; chữ đã sửa chính tả vẫn giữ định dạng của chữ gốc.
+
+PDF cần phông TTF có dấu tiếng Việt, tự tìm theo thứ tự: Times New Roman (`ttf-mscorefonts-installer`), Liberation Serif
+(`fonts-liberation`), DejaVu Serif, Noto Serif trong `/usr/share/fonts/truetype/`. Muốn chỉ định thì đặt `PDF_FONT_FILES` trong `.env`
+(4 file cách nhau dấu phẩy: thường, đậm, nghiêng, đậm nghiêng). Không có phông nào thì dùng Charis SIL có sẵn trong PyMuPDF.
+
 ## Speech-to-text
 
 Chép lời file âm thanh bằng `vinai/PhoWhisper-large` (Whisper large-v2 tinh chỉnh cho tiếng Việt) chạy trên vLLM, rồi sửa chính tả
@@ -451,6 +463,9 @@ Cổng phải khớp `CHANDRA_URL` và `PHOWHISPER_URL` trong `.env`. Model tron
 API ở cổng `API_PORT` (mặc định 9090). Worker mặc định: prepare 2, ocr 2, spell 2, db 2 (đổi bằng `PREPARE_WORKERS`, `OCR_WORKERS`, `SPELL_WORKERS`, `DB_WORKERS`);
 speech mỗi hàng đợi 1 (`SPEECH_PREPARE_WORKERS`, `SPEECH_ASR_WORKERS`, `SPEECH_SPELL_WORKERS`, `SPEECH_DB_WORKERS`), log ở `logs/speech/`;
 metadata sách 1 (`BOOK_WORKERS`), log ở `logs/book/`.
+`LOG_FULL_OUTPUT=true` (mặc định) ghi **đầy đủ** đầu ra Chandra từng lần gọi (`[page N] Chandra output, attempt i/n`, log `logs/ocr/`;
+gọi `/sync` thì ở `logs/api/`) và từng câu gửi ProtonX kèm câu trả về (`ProtonX i/n changed|unchanged`, `in :` / `out:`; log `logs/spell/`).
+Service ProtonX cũng ghi từng câu vào / ra ở `logs/services/spellfix_*.log`. Log lớn nhanh với file nhiều trang; đặt `false` để tắt.
 RabbitMQ, PostgreSQL và Flower nên chỉ nghe `127.0.0.1` (Flower do `start-service.sh` bật đã như vậy).
 
 ## Bảo mật

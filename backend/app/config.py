@@ -1,4 +1,5 @@
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -66,6 +67,12 @@ class Settings:
     chandra_model: str = "datalab-to/chandra-ocr-2"
     chandra_max_tokens: int = 4096
     chandra_timeout: float = 300.0
+    # Số lần gửi lại khi Chandra không trả HTML (JSON / Markdown)
+    chandra_html_retries: int = 2
+    # Ghi đầy đủ đầu ra Chandra / ProtonX vào log
+    log_full_output: bool = True
+    # Phông cho file PDF xuất ra: thường, đậm, nghiêng, đậm nghiêng (trống = tự tìm Times New Roman / Liberation Serif / DejaVu Serif)
+    pdf_font_files: tuple = ()
     ocr_concurrency: int = 4
 
     # Speech-to-text: PhoWhisper (vLLM)
@@ -88,6 +95,7 @@ class Settings:
     render_dpi: int = 200
     max_long_side: int = 1536
     deskew: bool = True
+    # Số trang tối đa mỗi tài liệu; MAX_PAGES=0 (hoặc âm) = không giới hạn
     max_pages: int = 100
     max_upload_mb: int = 50
     pdf_text_fallback: bool = True
@@ -178,6 +186,9 @@ def load_settings() -> Settings:
         chandra_model=_str("CHANDRA_MODEL", d.chandra_model),
         chandra_max_tokens=_int("CHANDRA_MAX_TOKENS", d.chandra_max_tokens),
         chandra_timeout=_float("CHANDRA_TIMEOUT", d.chandra_timeout),
+        chandra_html_retries=max(0, _int("CHANDRA_HTML_RETRIES", d.chandra_html_retries)),
+        log_full_output=_bool("LOG_FULL_OUTPUT", d.log_full_output),
+        pdf_font_files=tuple(f.strip() for f in _str("PDF_FONT_FILES").split(",") if f.strip()),
         ocr_concurrency=max(1, _int("OCR_CONCURRENCY", d.ocr_concurrency)),
         phowhisper_url=_str("PHOWHISPER_URL", d.phowhisper_url),
         phowhisper_model=_str("PHOWHISPER_MODEL", d.phowhisper_model),
@@ -196,7 +207,7 @@ def load_settings() -> Settings:
         render_dpi=_int("RENDER_DPI", d.render_dpi),
         max_long_side=_int("MAX_LONG_SIDE", d.max_long_side),
         deskew=_bool("DESKEW", d.deskew),
-        max_pages=_int("MAX_PAGES", d.max_pages),
+        max_pages=_int("MAX_PAGES", d.max_pages) if _int("MAX_PAGES", d.max_pages) > 0 else sys.maxsize,
         max_upload_mb=_int("MAX_UPLOAD_MB", d.max_upload_mb),
         pdf_text_fallback=_bool("PDF_TEXT_FALLBACK", d.pdf_text_fallback),
         text_first=_bool("TEXT_FIRST", d.text_first),
